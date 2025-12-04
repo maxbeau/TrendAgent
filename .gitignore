@@ -1,0 +1,38 @@
+# System files
+.DS_Store
+*.pyc
+*~
+__pycache__/
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Environment variables
+.env
+backend/.env
+frontend/.env.local
+frontend/.env
+
+# IDE and editor files
+.idea/
+.vscode/
+.roo/
+.serena/
+docs/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test artifacts
+.pytest_cache/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+
+# Serena cache
+.serena/cache/

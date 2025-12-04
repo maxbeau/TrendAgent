@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+pandas
+apscheduler
+langchain
+langchain-openai
+fear-greed-index
+httpx
+sqlalchemy
+asyncpg
+python-dotenv
+supabase
+pytest
+pytest-asyncio
+respx
+yfinance

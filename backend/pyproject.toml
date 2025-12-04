@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "trendagent-backend"
+version = "0.1.0"
+description = "Backend for TrendAgen"
+authors = ["Max"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*"}
+pydantic-settings = "*"
+pandas = "*"
+pandas-ta = "*"
+apscheduler = "*"
+langchain = "*"
+httpx = "*"
+sqlalchemy = "*"
+asyncpg = "*"
+python-dotenv = "*"
+supabase = "*"
+yfinance = "*"
+fear-greed-index = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
