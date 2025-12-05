@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from datetime import datetime
+
 
 def calculate(ticker: str, model_version: str) -> dict:
     """Mock calculation until the actual factor pipeline is in place."""
