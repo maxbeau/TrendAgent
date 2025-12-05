@@ -22,6 +22,8 @@ python-dotenv = "*"
 supabase = "*"
 yfinance = "*"
 fear-greed-index = "*"
+alembic = "*"
+greenlet = "*"
 
 [build-system]
 requires = ["poetry-core"]

@@ -1,30 +1,32 @@
+import logging
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
+from app.api.serializers import serialize_analysis_score
+from app.db import AsyncSessionLocal, get_db
+from app.models import AnalysisScore
 from app.services import aion_engine
 from app.services.event_intensity import summarize_event_intensity
 from app.services.policy_tailwind import summarize_policy_tailwind
-from app.services.tam_expansion import summarize_tam_expansion
-from app.services.risk_reward import summarize_risk_reward
 from app.services.providers.base import ProviderError
+from app.services.risk_reward import summarize_risk_reward
+from app.services.tam_expansion import summarize_tam_expansion
 
 
 router = APIRouter(prefix="/engine", tags=["engine"])
+logger = logging.getLogger(__name__)
 
 
 class CalculationRequest(BaseModel):
     ticker: str
-    model_version: str
-
-
-class CalculationResult(BaseModel):
-    ticker: str
-    total_score: float
-    action_card: str
-    calculated_at: datetime
+    model_version: str = "v8.0"
 
 
 class PolicyTailwindRequest(BaseModel):
@@ -96,27 +98,68 @@ class RiskRewardResponse(BaseModel):
     generated_at: datetime
 
 
-@router.post("/calculate", response_model=CalculationResult)
-def calculate(payload: CalculationRequest) -> CalculationResult:
-    base = aion_engine.calculate(payload.ticker, payload.model_version)
-    return CalculationResult(
-        ticker=payload.ticker,
-        total_score=base["total_score"],
-        action_card=base["action_card"],
-        calculated_at=base["calculated_at"],
-    )
+class CalculationTaskResponse(BaseModel):
+    message: str
+    task_id: str
 
 
-@router.post("/narrative/generate")
-def generate_narrative(ticker: str) -> dict:
-    prompt = aion_engine.build_narrative_context(ticker)
-    # TODO: schedule async LangChain run
-    return {"status": "scheduled", "ticket": f"narrative-{ticker}-{int(datetime.utcnow().timestamp())}", "prompt": prompt}
+async def run_calculation_in_background(
+    task_id: str, ticker: str, model_version: str
+) -> None:
+    """
+    后台执行 AION 计算并写入数据库。
+    """
+    try:
+        async with AsyncSessionLocal() as db:
+            category_weights, factor_weights = await aion_engine.load_model_weights(model_version, db)
+            result_data = await aion_engine.calculate(
+                ticker,
+                model_version=model_version,
+                factor_weights=factor_weights,
+                category_weights=category_weights,
+            )
+            factors_payload = jsonable_encoder(result_data["factors"])
+
+            score_entry = AnalysisScore(
+                task_id=task_id,
+                ticker=result_data["ticker"],
+                total_score=result_data["total_score"],
+                model_version=result_data["model_version"],
+                action_card=result_data["action_card"],
+                factors=factors_payload,
+                weight_denominator=result_data["weight_denominator"],
+                calculated_at=result_data["calculated_at"],
+            )
+
+            db.add(score_entry)
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Task %s failed", task_id)
 
 
-@router.get("/narrative/status/{ticket}")
-def narrative_status(ticket: str) -> dict:
-    return {"ticket": ticket, "status": "queued", "updated_at": datetime.utcnow()}
+@router.post("/calculate", status_code=202, response_model=CalculationTaskResponse)
+async def calculate_aion_score(
+    background_tasks: BackgroundTasks,
+    payload: CalculationRequest,
+) -> CalculationTaskResponse:
+    task_id = str(uuid.uuid4())
+    background_tasks.add_task(run_calculation_in_background, task_id, payload.ticker, payload.model_version)
+    return CalculationTaskResponse(message="Calculation started", task_id=task_id)
+
+
+@router.get("/status/{task_id}")
+async def get_task_status(task_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """
+    根据 Task ID 从数据库查询计算结果。
+    """
+    stmt = select(AnalysisScore).where(AnalysisScore.task_id == task_id)
+    result = await db.execute(stmt)
+    score_entry = result.scalar_one_or_none()
+
+    if score_entry:
+        return {"status": "completed", "data": serialize_analysis_score(score_entry)}
+
+    return {"status": "pending"}
 
 
 @router.post("/policy-tailwind", response_model=PolicyTailwindResponse)
