@@ -147,12 +147,3 @@ async def calculate(
         "factors": aggregated["factor_output"],
         "weight_denominator": aggregated["weight_denominator"],
     }
-
-
-def build_narrative_context(ticker: str) -> dict:
-    """Return a minimal skeleton for the narrative builder."""
-    return {
-        "ticker": ticker,
-        "primary_insight": "Placeholder narrative context",
-        "qualitative_signals": [],
-    }

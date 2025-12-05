@@ -1,9 +1,10 @@
 from fastapi import APIRouter
 
-from . import dashboard, engine, health
+from . import dashboard, engine, health, narrative
 
 
 router = APIRouter(prefix="/api")
 router.include_router(dashboard.router)
 router.include_router(engine.router)
 router.include_router(health.router)
+router.include_router(narrative.router)

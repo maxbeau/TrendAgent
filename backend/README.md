@@ -38,6 +38,7 @@
    * `GET /dashboard/summary`
    * `POST /engine/calculate`
    * `POST /narrative/generate`
+   * `GET /narrative/status/{task_id}`
    * `POST /engine/policy-tailwind`（基于 Massive 新闻 + LLM 的政策顺风定性总结）
    * `POST /engine/event-intensity`（基于 Massive 新闻标题 + LLM 的事件强度评估）
    * `POST /engine/tam-expansion`（基于 Massive 新闻 + LLM 的 TAM 扩张定性判定）

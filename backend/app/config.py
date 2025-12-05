@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
     openai_api_key: str = ""
     openai_model_name: str = "gpt-5.1"
+    openai_small_model_name: str = "gpt-4o-mini"
     openai_base_url: str = "https://api.openai.com/v1"
     yfinance_proxy: Optional[str] = "http://127.0.0.1:7890"
 

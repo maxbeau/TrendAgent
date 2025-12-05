@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
@@ -150,6 +150,59 @@ class YFinanceProvider(BaseProvider):
             }
             for row in records
         ]
+
+    async def fetch_news(
+        self, ticker: str, *, limit: int = 20, start: Optional[date | datetime | str] = None
+    ) -> List[Dict[str, Any]]:
+        def _load_news() -> List[Dict[str, Any]]:
+            t = self._make_ticker(ticker)
+            return getattr(t, "news", []) or []
+
+        raw = await self._to_thread(_load_news)
+
+        start_dt: Optional[datetime] = None
+        if isinstance(start, datetime):
+            start_dt = start
+        elif isinstance(start, date):
+            start_dt = datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc)
+        elif isinstance(start, str):
+            try:
+                start_dt = datetime.fromisoformat(start)
+            except ValueError:
+                start_dt = None
+            if start_dt and start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+
+        normalized: List[Dict[str, Any]] = []
+        for item in raw:
+            published_raw = item.get("providerPublishTime") or item.get("providerPublishDate")
+            published_at: Optional[datetime] = None
+            if isinstance(published_raw, (int, float)):
+                published_at = datetime.fromtimestamp(published_raw, tz=timezone.utc)
+            elif isinstance(published_raw, str):
+                try:
+                    published_at = datetime.fromisoformat(published_raw)
+                except ValueError:
+                    published_at = None
+                if published_at and published_at.tzinfo is None:
+                    published_at = published_at.replace(tzinfo=timezone.utc)
+
+            if start_dt and published_at and published_at < start_dt:
+                continue
+
+            normalized.append(
+                {
+                    "title": item.get("title") or "",
+                    "summary": item.get("summary") or item.get("content") or "",
+                    "url": item.get("link") or item.get("url"),
+                    "source": item.get("publisher"),
+                    "published_at": published_at.isoformat() if published_at else None,
+                }
+            )
+            if len(normalized) >= limit:
+                break
+
+        return normalized
 
     async def fetch_put_call_ratio(
         self, underlying: str, *, expiration_date: Optional[str] = None

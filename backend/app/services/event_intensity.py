@@ -7,25 +7,9 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-
-from app.config import get_settings
+from app.services.llm import build_llm
 from app.services.providers import MassiveProvider
 from app.services.providers.base import ProviderError
-
-
-settings = get_settings()
-
-
-def _get_llm() -> ChatOpenAI:
-    if not settings.openai_api_key:
-        raise ValueError("OpenAI API key is missing; set OPENAI_API_KEY in the environment.")
-    return ChatOpenAI(
-        model=settings.openai_model_name,
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
-        temperature=0.2,
-    )
 
 
 def _strip_code_fence(content: str) -> str:
@@ -126,7 +110,7 @@ async def summarize_event_intensity(
         f"Ticker: {ticker}\nRecent news headlines:\n{_build_news_block(articles)}"
     )
 
-    llm = _get_llm()
+    llm = build_llm(temperature=0.2)
     response = await llm.ainvoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
     )

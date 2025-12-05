@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     PrimaryKeyConstraint,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -95,3 +97,56 @@ class AnalysisScore(Base):
     weight_denominator = Column(Float)
     calculated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class SoftFactorScore(Base):
+    __tablename__ = "soft_factor_scores"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticker = Column(String(10), nullable=False, index=True)
+    factor_code = Column(String(20), nullable=False)
+    asof_date = Column(Date, nullable=False)
+    score = Column(Float)
+    confidence = Column(Float)
+    reasons = Column(JSONB, nullable=False, default=list)
+    citations = Column(JSONB, nullable=False, default=list)
+    created_at = Column(DateTime, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint("ticker", "factor_code", "asof_date", name="uq_soft_factor_scores_identity"),
+    )
+
+
+class ContextStore(Base):
+    __tablename__ = "context_store"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticker = Column(String(10), nullable=False, index=True)
+    asof_date = Column(Date, nullable=False)
+    type = Column(String(20), nullable=False)
+    summary = Column(JSONB, nullable=False)
+    source_refs = Column(JSONB, nullable=False, default=list)
+    created_at = Column(DateTime, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint("ticker", "asof_date", "type", name="uq_context_store_identity"),
+    )
+
+
+class NarrativeJob(Base):
+    __tablename__ = "narrative_jobs"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticker = Column(String(10), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="pending")
+    progress = Column(Integer, nullable=False, default=0)
+    error_message = Column(String)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class NarrativeReport(Base):
+    __tablename__ = "narrative_reports"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("narrative_jobs.id", ondelete="CASCADE"), nullable=False, unique=True)
+    ticker = Column(String(10), nullable=False, index=True)
+    output_json = Column(JSONB, nullable=False)
+    latency_ms = Column(Integer)
+    created_at = Column(DateTime, server_default=func.now())
+
+    job = relationship("NarrativeJob")
