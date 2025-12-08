@@ -12,6 +12,17 @@ from app.services.providers.base import HTTPProvider, ProviderError, _strip_none
 settings = get_settings()
 
 
+def _is_plan_limited_error(exc: Exception) -> bool:
+    """
+    Some legacy endpoints now hard fail (HTTP 403 / plan limit). Instead of surfacing
+    hard errors to the caller, we treat these as data gaps so the pipeline can fall
+    back to secondary sources.
+    """
+    text = str(exc).lower()
+    keywords = ("plan limit", "legacy endpoint", "legacy users", "not authorized", "403")
+    return any(keyword in text for keyword in keywords)
+
+
 class FMPProvider(HTTPProvider):
     name = "FMP"
 
@@ -93,11 +104,19 @@ class FMPProvider(HTTPProvider):
         return data if isinstance(data, list) else data.get("ratios", [])
 
     async def fetch_institutional_holders(self, ticker: str) -> List[Dict[str, Any]]:
+        params = {"symbol": ticker}
         try:
-            data = await self._get_authed("/v4/institutional-holders", params={"symbol": ticker})
+            data = await self._get_authed("/v4/institutional-holders", params=params)
             return data if isinstance(data, list) else data.get("items", [])
-        except ProviderError:
-            legacy = await self._get_authed(f"/v3/institutional-holder/{ticker}")
+        except ProviderError as exc:
+            if _is_plan_limited_error(exc):
+                return []
+            try:
+                legacy = await self._get_authed(f"/v3/institutional-holder/{ticker}")
+            except ProviderError as legacy_exc:
+                if _is_plan_limited_error(legacy_exc):
+                    return []
+                raise legacy_exc
             return legacy if isinstance(legacy, list) else legacy.get("items", [])
 
     async def fetch_news(

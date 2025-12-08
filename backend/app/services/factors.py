@@ -7,12 +7,17 @@ import logging
 import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Awaitable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import pandas as pd
 
 from app.config import MacroThresholds, get_settings
-from app.services.providers import MassiveProvider, YFinanceProvider
+from app.services.providers import (
+    FMPProvider,
+    FearGreedIndexProvider,
+    MassiveProvider,
+    YFinanceProvider,
+)
 from app.services.providers.base import ProviderError
 from app.services.providers.fred import FREDProvider
 from app.services.risk_reward import summarize_risk_reward
@@ -38,7 +43,7 @@ def _soft_result(
     *,
     status: str,
     summary: Optional[str],
-    key_evidence: List[str],
+    key_evidence: Optional[List[str]],
     sources: Optional[List[Dict[str, Any]]] = None,
     asof_date: Optional[str],
     confidence: Optional[float],
@@ -46,23 +51,32 @@ def _soft_result(
     weights: Optional[Dict[str, float]] = None,
     weight_denominator: float = 0.0,
     factor_scores: Optional[Dict[str, Optional[float]]] = None,
+    extra_components: Optional[Dict[str, Any]] = None,
 ) -> "FactorResult":
     sanitized_summary = normalize_summary(summary)
-    sanitized_key_evidence = normalize_key_evidence(key_evidence)
+    if isinstance(key_evidence, list):
+        sanitized_key_evidence = [str(item) for item in key_evidence if item is not None]
+    elif key_evidence is None:
+        sanitized_key_evidence = []
+    else:
+        sanitized_key_evidence = [str(key_evidence)]
     sanitized_sources = sources or []
+    components_payload = {
+        "asof_date": asof_date,
+        "confidence": confidence,
+        "weights_used": weights or {},
+        "weight_denominator": weight_denominator,
+        "factor_scores": factor_scores or {},
+    }
+    if extra_components:
+        components_payload.update(extra_components)
     return FactorResult(
         score=score,
         status=status,
         summary=sanitized_summary,
         key_evidence=sanitized_key_evidence,
         sources=sanitized_sources,
-        components={
-            "asof_date": asof_date,
-            "confidence": confidence,
-            "weights_used": weights or {},
-            "weight_denominator": weight_denominator,
-            "factor_scores": factor_scores or {},
-        },
+        components=components_payload,
         errors=errors,
         weight_denominator=weight_denominator,
     )
@@ -180,6 +194,49 @@ def _sanitize_weights(raw_weights: Optional[Dict[str, float]]) -> tuple[Dict[str
 def _factor_scores_from(score: Optional[float], weights: Dict[str, float]) -> Dict[str, Optional[float]]:
     """Mirror the main score to all weighted sub-keys for soft factors."""
     return {code: score for code in weights}
+
+
+def _expected_move_range(
+    spot: Optional[float],
+    vol: Optional[float],
+    *,
+    days: int = 30,
+) -> Optional[Dict[str, Any]]:
+    """Estimate a 1-sigma price range over the provided horizon."""
+    if spot is None or vol is None:
+        return None
+    if not isinstance(spot, (int, float)) or not isinstance(vol, (int, float)):
+        return None
+    if not math.isfinite(spot) or not math.isfinite(vol) or spot <= 0 or vol <= 0:
+        return None
+    horizon = max(days, 1)
+    move_pct = vol * math.sqrt(horizon / 252)
+    move_abs = spot * move_pct
+    return {
+        "spot": spot,
+        "days": horizon,
+        "vol_used": vol,
+        "move_pct": move_pct,
+        "move_abs": move_abs,
+        "lower": spot - move_abs,
+        "upper": spot + move_abs,
+    }
+
+
+def _build_expected_move_payload(
+    spot: Optional[float],
+    atm_iv: Optional[float],
+    hv: Optional[float],
+) -> Dict[str, Any]:
+    """Return IV/HV 1-sigma ranges when they can be computed."""
+    payload: Dict[str, Any] = {}
+    iv_move = _expected_move_range(spot, atm_iv)
+    hv_move = _expected_move_range(spot, hv)
+    if iv_move:
+        payload["iv"] = iv_move
+    if hv_move:
+        payload["hv"] = hv_move
+    return payload
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -414,6 +471,247 @@ def _latest_values(frame: pd.DataFrame, keys: Sequence[str], count: int = 2) -> 
         if len(values) >= count:
             break
     return values
+
+
+_HOLDER_DATE_FIELDS: Sequence[str] = (
+    "date",
+    "reportDate",
+    "report_date",
+    "filingDate",
+    "filing_date",
+    "filedDate",
+    "filed_date",
+    "period",
+    "as_of",
+    "Date Reported",
+)
+_HOLDER_SHARE_FIELDS: Sequence[str] = (
+    "shares",
+    "sharesNumber",
+    "shares_number",
+    "sharesAmount",
+    "numberOfShares",
+    "Number of Shares",
+    "Shares",
+)
+_HOLDER_VALUE_FIELDS: Sequence[str] = (
+    "value",
+    "marketValue",
+    "market_value",
+    "valueOfShares",
+    "Value",
+)
+_HOLDER_NAME_FIELDS: Sequence[str] = (
+    "holder",
+    "holderName",
+    "holder_name",
+    "organization",
+    "organizationName",
+    "organization_name",
+    "investmentManager",
+    "investment_manager",
+    "investorName",
+    "investorname",
+    "name",
+)
+
+
+def _coerce_holder_date(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.date()
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, (int, float)) and math.isfinite(value):
+        try:
+            return datetime.utcfromtimestamp(float(value)).date()
+        except Exception:
+            return None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        try:
+            parsed = pd.to_datetime(cleaned, errors="coerce")
+        except Exception:
+            return None
+        if isinstance(parsed, pd.Timestamp):
+            return parsed.date()
+        if isinstance(parsed, datetime):
+            return parsed.date()
+        if isinstance(parsed, date):
+            return parsed
+    return None
+
+
+def _sanitize_holder_numeric(value: Any) -> Optional[float]:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        cleaned = cleaned.replace(",", "").replace("$", "").replace("%", "")
+        value = cleaned
+    return _safe_float(value)
+
+
+def _summarize_institutional_holders(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    source: str,
+) -> Dict[str, Any]:
+    """
+    Aggregate raw 13F holder records into quarterly totals and compute QoQ change metrics.
+    """
+    summary: Dict[str, Any] = {
+        "source": source,
+        "record_count": len(records),
+        "timeline": [],
+        "latest_holder_count": len(records),
+        "latest_period": None,
+        "previous_period": None,
+        "qoq_change_value": None,
+        "qoq_change_shares": None,
+        "trend_metric": None,
+    }
+    if not records:
+        return summary
+
+    aggregated: Dict[tuple[int, int], Dict[str, Any]] = {}
+    for row in records:
+        if not isinstance(row, Mapping):
+            continue
+        as_of: Optional[date] = None
+        for field in _HOLDER_DATE_FIELDS:
+            if field not in row:
+                continue
+            as_of = _coerce_holder_date(row.get(field))
+            if as_of is not None:
+                break
+        if as_of is None:
+            continue
+        quarter = ((as_of.month - 1) // 3) + 1
+        bucket_key = (as_of.year, quarter)
+        bucket = aggregated.setdefault(
+            bucket_key,
+            {
+                "value_total": 0.0,
+                "value_samples": 0,
+                "share_total": 0.0,
+                "share_samples": 0,
+                "holder_ids": set(),
+                "row_count": 0,
+            },
+        )
+        bucket["row_count"] += 1
+
+        holder_id: Optional[str] = None
+        for name_key in _HOLDER_NAME_FIELDS:
+            candidate = row.get(name_key)
+            if candidate:
+                holder_id = str(candidate)
+                break
+        if holder_id:
+            bucket["holder_ids"].add(holder_id)
+
+        for value_key in _HOLDER_VALUE_FIELDS:
+            if value_key not in row:
+                continue
+            value = _sanitize_holder_numeric(row.get(value_key))
+            if value is None:
+                continue
+            bucket["value_total"] += value
+            bucket["value_samples"] += 1
+            break
+
+        for share_key in _HOLDER_SHARE_FIELDS:
+            if share_key not in row:
+                continue
+            shares = _sanitize_holder_numeric(row.get(share_key))
+            if shares is None:
+                continue
+            bucket["share_total"] += shares
+            bucket["share_samples"] += 1
+            break
+
+    if not aggregated:
+        return summary
+
+    timeline: List[Dict[str, Any]] = []
+    for (year, quarter), bucket in sorted(aggregated.items(), key=lambda item: item[0], reverse=True):
+        holder_count = len(bucket["holder_ids"]) or bucket["row_count"]
+        entry = {
+            "period": f"{year}-Q{quarter}",
+            "holder_count": holder_count,
+            "total_value": float(bucket["value_total"]) if bucket["value_samples"] > 0 else None,
+            "total_shares": float(bucket["share_total"]) if bucket["share_samples"] > 0 else None,
+        }
+        timeline.append(entry)
+
+    if not timeline:
+        return summary
+
+    summary["timeline"] = timeline
+    summary["latest_holder_count"] = timeline[0]["holder_count"]
+    summary["latest_period"] = timeline[0]["period"]
+    summary["previous_period"] = timeline[1]["period"] if len(timeline) > 1 else None
+
+    if len(timeline) > 1:
+        summary["qoq_change_value"] = _relative_change(
+            timeline[0]["total_value"], timeline[1]["total_value"]
+        )
+        summary["qoq_change_shares"] = _relative_change(
+            timeline[0]["total_shares"], timeline[1]["total_shares"]
+        )
+    trend_metric = summary["qoq_change_value"]
+    if trend_metric is None:
+        trend_metric = summary["qoq_change_shares"]
+    summary["trend_metric"] = trend_metric
+    return summary
+
+
+async def _fetch_with_default(
+    coro: Awaitable[Any],
+    label: str,
+    default: Any,
+) -> tuple[Any, Optional[str]]:
+    """
+    Execute provider coroutine and capture ProviderError into a log-friendly message.
+    """
+    try:
+        result = await coro
+        return result, None
+    except ProviderError as exc:  # pragma: no cover - network
+        return default, f"{label}: {exc}"
+
+
+async def _load_institutional_summary(
+    ticker: str,
+    yfinance: YFinanceProvider,
+    fmp: FMPProvider,
+) -> tuple[Dict[str, Any], List[str]]:
+    """
+    Fetch institutional holders from both providers in parallel, then summarize with fallback.
+    """
+    y_task = asyncio.create_task(_fetch_with_default(yfinance.fetch_holders(ticker), "holders", []))
+    fmp_task = asyncio.create_task(
+        _fetch_with_default(fmp.fetch_institutional_holders(ticker), "fmp_holders", [])
+    )
+    holders, holders_error = await y_task
+    fmp_holders, fmp_error = await fmp_task
+
+    preferred_records = fmp_holders or holders
+    summary = _summarize_institutional_holders(
+        preferred_records,
+        source="fmp" if fmp_holders else "yfinance",
+    )
+    summary["available_sources"] = {"fmp": bool(fmp_holders), "yfinance": bool(holders)}
+    summary["source_preference"] = summary["source"]
+
+    errors = [err for err in (holders_error, fmp_error) if err]
+    return summary, errors
 
 
 @dataclass
@@ -1334,32 +1632,34 @@ async def compute_flow(
     *,
     yfinance: Optional[YFinanceProvider] = None,
     massive: Optional[MassiveProvider] = None,
+    fmp: Optional[FMPProvider] = None,
     factor_weights: Optional[Dict[str, float]] = None,
 ) -> FactorResult:
     y_provider = yfinance or YFinanceProvider()
-    massive_provider = massive or MassiveProvider()
+    fmp_provider = fmp or FMPProvider()
     weights = factor_weights or {}
     errors: List[str] = []
 
-    try:
-        holders = await y_provider.fetch_holders(ticker)
-    except ProviderError as exc:  # pragma: no cover - network
-        holders = []
-        errors.append(f"holders: {exc}")
+    holder_summary, holder_errors = await _load_institutional_summary(ticker, y_provider, fmp_provider)
+    errors.extend(holder_errors)
 
-    try:
-        put_call = await y_provider.fetch_put_call_ratio(ticker)
-    except ProviderError as exc:  # pragma: no cover - network
-        put_call = {}
-        errors.append(f"put_call: {exc}")
+    put_call_task = asyncio.create_task(
+        _fetch_with_default(y_provider.fetch_put_call_ratio(ticker), "put_call", {})
+    )
+    gex_task = asyncio.create_task(
+        _fetch_with_default(y_provider.fetch_gamma_exposure(ticker), "gex", {})
+    )
+    put_call, put_call_error = await put_call_task
+    gex, gex_error = await gex_task
+    errors.extend(err for err in (put_call_error, gex_error) if err)
 
-    try:
-        gex = await y_provider.fetch_gamma_exposure(ticker)
-    except ProviderError as exc:  # pragma: no cover - network
-        gex = {}
-        errors.append(f"gex: {exc}")
+    inst_presence_score = _bucketize(holder_summary.get("latest_holder_count"), [1, 3, 5, 8])
+    trend_metric = holder_summary.get("trend_metric")
+    trend_score = None
+    if trend_metric is not None:
+        trend_score = _bucketize(trend_metric, [-0.2, -0.05, 0.05, 0.15])
+    inst_score = _mean([inst_presence_score, trend_score]) or inst_presence_score
 
-    inst_score = _bucketize(len(holders), [1, 3, 5, 8])
     pcr_score = _bucketize(put_call.get("put_call_ratio"), [0.6, 0.8, 1.0, 1.2], higher_is_better=False)
     gex_score = None
     if gex.get("total_gamma_exposure") is not None:
@@ -1378,7 +1678,9 @@ async def compute_flow(
         score=score,
         status=status,
         components={
-            "institutional_count": len(holders),
+            "institutional_count": holder_summary.get("latest_holder_count"),
+            "institutional_trend": holder_summary,
+            "institutional_sources": holder_summary.get("available_sources"),
             "put_call": put_call,
             "gamma_exposure": gex,
             "factor_scores": factor_scores,
@@ -1394,40 +1696,44 @@ async def compute_sentiment(
     ticker: str,
     *,
     yfinance: Optional[YFinanceProvider] = None,
+    fear_greed: Optional[FearGreedIndexProvider] = None,
     factor_weights: Optional[Dict[str, float]] = None,
 ) -> FactorResult:
-    provider = yfinance or YFinanceProvider()
+    y_provider = yfinance or YFinanceProvider()
+    fear_greed_provider = fear_greed or FearGreedIndexProvider()
     weights = factor_weights or {}
     errors: List[str] = []
 
-    try:
-        vix_history = await provider.fetch_equity_daily("^VIX", start=date.today() - timedelta(days=60), end=date.today())
-        vix_close = vix_history[-1]["close"] if vix_history else None
-    except ProviderError as exc:  # pragma: no cover - network
-        vix_close = None
-        errors.append(f"vix: {exc}")
+    async def _fetch_or_log(name: str, coro: Awaitable[Any], default: Any) -> Any:
+        try:
+            return await coro
+        except ProviderError as exc:  # pragma: no cover - network
+            errors.append(f"{name}: {exc}")
+            return default
 
-    try:
-        put_call = await provider.fetch_put_call_ratio(ticker)
-    except ProviderError as exc:  # pragma: no cover - network
-        put_call = {}
-        errors.append(f"put_call: {exc}")
+    today = date.today()
+    start = today - timedelta(days=60)
+    vix_history, put_call, skew, fear_greed_index = await asyncio.gather(
+        _fetch_or_log("vix", y_provider.fetch_equity_daily("^VIX", start=start, end=today), []),
+        _fetch_or_log("put_call", y_provider.fetch_put_call_ratio(ticker), {}),
+        _fetch_or_log("skew", y_provider.fetch_vol_skew(ticker), {}),
+        _fetch_or_log("fear_greed", fear_greed_provider.fetch_index(), {}),
+    )
 
-    try:
-        skew = await provider.fetch_vol_skew(ticker)
-    except ProviderError as exc:  # pragma: no cover - network
-        skew = {}
-        errors.append(f"skew: {exc}")
+    vix_close = vix_history[-1]["close"] if vix_history else None
+    fear_greed_value = _safe_float(fear_greed_index.get("score")) if fear_greed_index else None
 
-    vix_score = _bucketize(vix_close, [12, 18, 24, 32]) if vix_close is not None else None
-    pcr_score = _bucketize(put_call.get("put_call_ratio"), [0.7, 0.9, 1.1, 1.3]) if put_call else None
-    skew_score = _bucketize(skew.get("skew_25d"), [0.0, 0.05, 0.1, 0.2]) if skew else None
-
+    metric_configs = [
+        ("sentiment.vix", vix_close, [12, 18, 24, 32], True),
+        ("sentiment.put_call", put_call.get("put_call_ratio") if put_call else None, [0.7, 0.9, 1.1, 1.3], True),
+        ("sentiment.skew", skew.get("skew_25d") if skew else None, [0.0, 0.05, 0.1, 0.2], True),
+        ("sentiment.fear_greed", fear_greed_value, [25, 40, 60, 75], False),
+    ]
     factor_scores = {
-        "sentiment.vix": vix_score,
-        "sentiment.put_call": pcr_score,
-        "sentiment.skew": skew_score,
-        "sentiment.fear_greed": None,
+        code: _bucketize(value, thresholds, higher_is_better=higher_is_better)
+        if value is not None
+        else None
+        for code, value, thresholds, higher_is_better in metric_configs
     }
     score, weight_denominator, applied_weights = _weighted_average(factor_scores, weights)
     status = "ok" if score is not None else "degraded" if errors else "unavailable"
@@ -1439,6 +1745,7 @@ async def compute_sentiment(
             "vix": vix_close,
             "put_call": put_call,
             "skew": skew,
+            "fear_greed": fear_greed_index,
             "factor_scores": factor_scores,
             "weights_used": applied_weights,
             "weight_denominator": weight_denominator,
@@ -1455,49 +1762,26 @@ async def compute_volatility(
     massive: Optional[MassiveProvider] = None,
     factor_weights: Optional[Dict[str, float]] = None,
 ) -> FactorResult:
-    def _expected_move(spot: Optional[float], vol: Optional[float], days: int = 30) -> Optional[Dict[str, Any]]:
-        """Estimate a 1-sigma price range over `days` using annualized vol."""
-        if spot is None or vol is None:
-            return None
-        if not isinstance(spot, (int, float)) or not isinstance(vol, (int, float)):
-            return None
-        if not math.isfinite(spot) or not math.isfinite(vol) or spot <= 0 or vol <= 0:
-            return None
-        horizon = max(days, 1)
-        move_pct = vol * math.sqrt(horizon / 252)
-        move_abs = spot * move_pct
-        return {
-            "spot": spot,
-            "days": horizon,
-            "vol_used": vol,
-            "move_pct": move_pct,
-            "move_abs": move_abs,
-            "lower": spot - move_abs,
-            "upper": spot + move_abs,
-        }
-
     y_provider = yfinance or YFinanceProvider()
     massive_provider = massive or MassiveProvider()
     weights = factor_weights or {}
     errors: List[str] = []
 
-    try:
-        iv_hv = await y_provider.fetch_iv_hv(ticker)
-    except ProviderError as exc:  # pragma: no cover - network
-        iv_hv = {}
-        errors.append(f"iv_hv: {exc}")
-
-    try:
-        skew = await y_provider.fetch_vol_skew(ticker)
-    except ProviderError as exc:  # pragma: no cover - network
-        skew = {}
-        errors.append(f"skew: {exc}")
-
-    try:
-        rr = await summarize_risk_reward(ticker, massive=massive_provider)
-    except ProviderError as exc:  # pragma: no cover - network
-        rr = {"status": "unavailable", "message": str(exc)}
-        errors.append(f"risk_reward: {exc}")
+    iv_task = asyncio.create_task(_fetch_with_default(y_provider.fetch_iv_hv(ticker), "iv_hv", {}))
+    skew_task = asyncio.create_task(_fetch_with_default(y_provider.fetch_vol_skew(ticker), "skew", {}))
+    rr_task = asyncio.create_task(
+        _fetch_with_default(
+            summarize_risk_reward(ticker, massive=massive_provider),
+            "risk_reward",
+            {"status": "unavailable", "ratio": None},
+        )
+    )
+    (iv_hv, iv_error), (skew, skew_error), (rr, rr_error) = await asyncio.gather(
+        iv_task,
+        skew_task,
+        rr_task,
+    )
+    errors.extend(err for err in (iv_error, skew_error, rr_error) if err)
 
     spot = iv_hv.get("spot")
     atm_iv = iv_hv.get("atm_iv")
@@ -1518,13 +1802,7 @@ async def compute_volatility(
     score, weight_denominator, applied_weights = _weighted_average(factor_scores, weights)
     status = "ok" if score is not None else "degraded" if errors else "unavailable"
 
-    expected_move = {}
-    iv_move = _expected_move(spot, atm_iv)
-    hv_move = _expected_move(spot, hv)
-    if iv_move:
-        expected_move["iv"] = iv_move
-    if hv_move:
-        expected_move["hv"] = hv_move
+    expected_move = _build_expected_move_payload(spot, atm_iv, hv)
 
     components: Dict[str, Any] = {
         "iv_vs_hv": iv_vs_hv,
@@ -1558,7 +1836,9 @@ async def compute_all_factors(
     *,
     factor_weights: Optional[Dict[str, float]],
     yfinance: Optional[YFinanceProvider] = None,
+    fear_greed: Optional[FearGreedIndexProvider] = None,
     massive: Optional[MassiveProvider] = None,
+    fmp: Optional[FMPProvider] = None,
     fred: Optional[FREDProvider] = None,
     db: Optional[AsyncSession] = None,
 ) -> Dict[str, FactorResult]:
@@ -1569,7 +1849,9 @@ async def compute_all_factors(
         raise ValueError("factor_weights are required for computing AION factor scores.")
 
     y_provider = yfinance or YFinanceProvider()
+    fear_greed_provider = fear_greed or FearGreedIndexProvider()
     massive_provider = massive or MassiveProvider()
+    fmp_provider = fmp or FMPProvider()
     fred_provider = fred or FREDProvider()
 
     macro_weights = _weights_for("macro.", factor_weights)
@@ -1608,10 +1890,26 @@ async def compute_all_factors(
             financials=preloaded_financials,
         ),
         "F4": compute_technical(ticker, yfinance=y_provider, factor_weights=technical_weights),
-        "F5": compute_flow(ticker, yfinance=y_provider, massive=massive_provider, factor_weights=flow_weights),
-        "F6": compute_sentiment(ticker, yfinance=y_provider, factor_weights=sentiment_weights),
+        "F5": compute_flow(
+            ticker,
+            yfinance=y_provider,
+            massive=massive_provider,
+            fmp=fmp_provider,
+            factor_weights=flow_weights,
+        ),
+        "F6": compute_sentiment(
+            ticker,
+            yfinance=y_provider,
+            fear_greed=fear_greed_provider,
+            factor_weights=sentiment_weights,
+        ),
         "F7": compute_soft_factor(
-            ticker, "F7", db=db, massive=massive_provider, factor_weights=catalyst_weights
+            ticker,
+            "F7",
+            db=db,
+            massive=massive_provider,
+            yfinance=y_provider,
+            factor_weights=catalyst_weights,
         ),
         "F8": compute_volatility(
             ticker, yfinance=y_provider, massive=massive_provider, factor_weights=volatility_weights
@@ -1634,6 +1932,7 @@ async def compute_soft_factor(
     factor_code: str,
     db: Optional[AsyncSession],
     massive: Optional[MassiveProvider],
+    yfinance: Optional[YFinanceProvider] = None,
     factor_weights: Optional[Dict[str, float]] = None,
 ) -> FactorResult:
     """
@@ -1667,11 +1966,14 @@ async def compute_soft_factor(
     if not entry:
         texts: List[str] = []
         sources: List[Dict[str, Any]] = []
+        news_articles: List[Dict[str, Any]] = []
+        calendar_context: Dict[str, Any] = {}
         if massive:
             try:
                 since = (date.today() - timedelta(days=30)).isoformat()
                 news = await massive.fetch_news(ticker, limit=20, published_utc=since)
-                for item in news or []:
+                news_articles = news or []
+                for item in news_articles:
                     title = item.get("title") or ""
                     summary = item.get("description") or item.get("summary") or ""
                     combined = f"{title}. {summary}".strip(". ")
@@ -1688,9 +1990,36 @@ async def compute_soft_factor(
             except Exception as exc:  # pragma: no cover - network/third-party
                 logger.warning("soft_factor_news_failed", extra={"factor": factor_code, "ticker": ticker, "error": str(exc)})
 
-        if texts:
+        if factor_code == "F7" and yfinance is not None:
             try:
-                scored = await score_soft_factor(ticker, factor_code, texts, db=db)
+                calendar_context = await yfinance.fetch_earnings_calendar(ticker)
+            except ProviderError as exc:  # pragma: no cover - provider errors
+                logger.warning("soft_factor_calendar_failed", extra={"factor": factor_code, "ticker": ticker, "error": str(exc)})
+            except Exception as exc:  # pragma: no cover - unexpected errors
+                logger.warning("soft_factor_calendar_failed", extra={"factor": factor_code, "ticker": ticker, "error": str(exc)})
+
+        scoring_context: Optional[Dict[str, Any]] = None
+        if factor_code == "F7":
+            scoring_context = {
+                "news_articles": news_articles,
+                "sources": sources,
+                "calendar": calendar_context,
+            }
+
+        should_attempt = bool(texts)
+        if factor_code == "F7" and (calendar_context or news_articles):
+            should_attempt = True
+
+        if should_attempt:
+            try:
+                scored = await score_soft_factor(
+                    ticker,
+                    factor_code,
+                    texts,
+                    db=db,
+                    context=scoring_context,
+                )
+                factor_scores_payload = scored.get("factor_scores")
                 return _soft_result(
                     scored.get("score"),
                     status="ok" if scored.get("score") is not None else "static",
@@ -1702,7 +2031,8 @@ async def compute_soft_factor(
                     errors=[],
                     weights=applied_weights,
                     weight_denominator=weight_denominator,
-                    factor_scores=_factor_scores_from(scored.get("score"), applied_weights),
+                    factor_scores=factor_scores_payload or _factor_scores_from(scored.get("score"), applied_weights),
+                    extra_components=scored.get("components"),
                 )
             except Exception as exc:  # pragma: no cover - LLM/DB errors
                 logger.warning("soft_factor_score_failed", extra={"factor": factor_code, "ticker": ticker, "error": str(exc)})
@@ -1721,6 +2051,12 @@ async def compute_soft_factor(
             factor_scores=_factor_scores_from(None, applied_weights),
         )
 
+    stored_factor_scores = None
+    stored_components = None
+    if isinstance(entry.reasons, dict):
+        stored_factor_scores = entry.reasons.get("factor_scores")
+        stored_components = entry.reasons.get("components")
+
     return _soft_result(
         entry.score,
         status="ok" if entry.score is not None else "static",
@@ -1732,5 +2068,6 @@ async def compute_soft_factor(
         errors=["Soft factor score is null; check ingest/LLM pipeline"] if entry.score is None else [],
         weights=applied_weights,
         weight_denominator=weight_denominator,
-        factor_scores=_factor_scores_from(entry.score, applied_weights),
+        factor_scores=stored_factor_scores or _factor_scores_from(entry.score, applied_weights),
+        extra_components=stored_components,
     )

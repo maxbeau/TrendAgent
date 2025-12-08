@@ -4,12 +4,22 @@ set -euo pipefail
 # TrendAgent 开发环境一键启动脚本
 # 请在项目根目录执行: ./start-dev.sh
 
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/health}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:${BACKEND_PORT}/api/health}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-30}"
+
+ensure_port_free() {
+    if lsof -ti "tcp:${BACKEND_PORT}" >/dev/null 2>&1; then
+        echo "❌ 端口 ${BACKEND_PORT} 已被其他进程占用，请停止后再试。"
+        exit 1
+    fi
+}
+
+ensure_port_free
 
 echo "🚀 正在启动 TrendAgent 后端服务..."
 # 使用 subshell 在后台启动后端, 避免污染当前终端目录
-(cd backend && uv run uvicorn app.main:application --reload --port 8000) &
+(cd backend && uv run uvicorn app.main:application --reload --port "${BACKEND_PORT}") &
 BACKEND_PID=$!
 
 cleanup() {

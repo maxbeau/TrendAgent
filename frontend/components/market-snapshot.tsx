@@ -1,5 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { safeNumber } from '@/lib/numbers';
+import { describeIvHvDelta, formatExpectedMoveRange, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import { cn } from '@/lib/utils';
 import type { AionAnalysisResult } from '@/types/aion';
 
@@ -12,6 +14,34 @@ interface MarketSnapshotProps {
   factors?: AionAnalysisResult['factors'];
   actionCard?: string;
 }
+
+type InstitutionalTrend = {
+  source?: string;
+  timeline?: Array<{
+    period?: string;
+    holder_count?: number;
+    total_value?: number | null;
+    total_shares?: number | null;
+  }>;
+  latest_holder_count?: number;
+  latest_period?: string | null;
+  previous_period?: string | null;
+  qoq_change_value?: number | null;
+  qoq_change_shares?: number | null;
+  trend_metric?: number | null;
+};
+
+type InstitutionalSources = {
+  fmp?: boolean;
+  yfinance?: boolean;
+};
+
+type FlowComponents = {
+  put_call?: { put_call_ratio?: unknown };
+  institutional_count?: unknown;
+  institutional_trend?: InstitutionalTrend;
+  institutional_sources?: InstitutionalSources;
+};
 
 function toneClass(tone: 'bullish' | 'bearish' | 'neutral' | 'warning' | 'muted') {
   if (tone === 'bullish') return 'text-bullish';
@@ -29,20 +59,49 @@ function formatPrice(liveQuote: LiveQuote) {
   return `${price} · 日内 ${change} (${pct})`;
 }
 
-function describeVol(ivHvDelta: number | null) {
-  if (ivHvDelta === null) return { text: '等待波动率计算 (IV vs HV)', tone: 'muted' as const };
-  if (ivHvDelta > 0.05) return { text: '隐含波动率高于历史波动率 · 期权偏贵', tone: 'warning' as const };
-  if (ivHvDelta < -0.05) return { text: '隐含波动率低于历史波动率 · 期权偏便宜', tone: 'bullish' as const };
-  return { text: '隐含波动率接近历史波动率 · 中性', tone: 'neutral' as const };
+function formatSignedPercent(value: number | null) {
+  if (value === null) return '—';
+  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)}%`;
 }
 
-function safeNumber(val: unknown): number | null {
-  if (typeof val === 'number' && Number.isFinite(val)) return val;
-  if (typeof val === 'string') {
-    const num = Number(val);
-    return Number.isFinite(num) ? num : null;
+function formatCompactUsd(value: number | null) {
+  if (value === null) return '—';
+  const abs = Math.abs(value);
+  const units =
+    abs >= 1e9
+      ? { divisor: 1e9, suffix: 'B' }
+      : abs >= 1e6
+        ? { divisor: 1e6, suffix: 'M' }
+        : abs >= 1e3
+          ? { divisor: 1e3, suffix: 'K' }
+          : { divisor: 1, suffix: '' };
+  const precision = units.divisor === 1 ? 0 : 1;
+  return `$${(value / units.divisor).toFixed(precision)}${units.suffix}`;
+}
+
+function describeInstitutionalTrendSummary(trend?: InstitutionalTrend | null) {
+  const change =
+    safeNumber(trend?.qoq_change_value) ??
+    safeNumber(trend?.qoq_change_shares) ??
+    safeNumber(trend?.trend_metric);
+  if (change === null) {
+    return { text: '机构增减趋势等待更新', tone: 'muted' as const };
   }
-  return null;
+  let tone: 'bullish' | 'bearish' | 'neutral' | 'warning' | 'muted' = 'neutral';
+  if (change >= 0.1) tone = 'bullish';
+  else if (change <= -0.1) tone = 'bearish';
+  const direction = change >= 0 ? '机构持仓回升' : '机构持仓下降';
+  return {
+    text: `${direction} ${formatSignedPercent(change)}`,
+    tone,
+  };
+}
+
+function describeInstitutionalSource(trend?: InstitutionalTrend | null, sources?: InstitutionalSources) {
+  if (!trend) return '机构趋势等待更新';
+  if (sources?.fmp) return '首选数据源：FMP';
+  if (sources?.yfinance) return '首选数据源：yfinance（FMP 数据暂缺）';
+  return '尚未连接可用的机构数据源';
 }
 
 function describeVolume(volumeZ: number | null) {
@@ -93,33 +152,66 @@ function SnapshotItem({
   );
 }
 
+function InstitutionalTrendTimeline({ trend }: { trend?: InstitutionalTrend | null }) {
+  const timeline = Array.isArray(trend?.timeline) ? trend.timeline.slice(0, 4) : [];
+  if (!timeline.length) return null;
+  const sourceLabel = trend?.source ? trend.source.toUpperCase() : '多源';
+  return (
+    <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+        <p className="font-medium text-slate-200">机构持仓趋势</p>
+        <span>数据源 · {sourceLabel}</span>
+      </div>
+      <div className="mt-3 grid grid-cols-3 text-xs uppercase tracking-[0.18em] text-slate-500">
+        <span>季度</span>
+        <span>机构数</span>
+        <span>持仓规模</span>
+      </div>
+      <div className="mt-2 space-y-1">
+        {timeline.map((entry, idx) => {
+          const holders =
+            typeof entry.holder_count === 'number'
+              ? entry.holder_count.toLocaleString('en-US')
+              : '—';
+          const totalValue = formatCompactUsd(safeNumber(entry.total_value));
+          return (
+            <div
+              key={entry.period ?? idx}
+              className="grid grid-cols-3 rounded-lg bg-white/5 px-2 py-1 text-sm font-mono text-slate-200"
+            >
+              <span>{entry.period ?? '—'}</span>
+              <span>{holders}</span>
+              <span>{totalValue}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCard }: MarketSnapshotProps) {
   const priceLine = formatPrice(liveQuote);
 
-  const volComponents = factors?.volatility?.components as { iv_vs_hv?: unknown } | undefined;
+  const volComponents = factors?.volatility?.components as { iv_vs_hv?: unknown; expected_move?: RawExpectedMove } | undefined;
   const volDelta = safeNumber(ivHvDelta ?? volComponents?.iv_vs_hv);
-  const expectedMove = (volComponents as { expected_move?: { iv?: Record<string, unknown>; hv?: Record<string, unknown> } } | undefined)?.expected_move;
-  const volDesc = describeVol(volDelta);
-  const volRangeLine = (() => {
-    const pick = expectedMove?.iv ?? expectedMove?.hv;
-    if (!pick) return null;
-    const lower = safeNumber((pick as any).lower);
-    const upper = safeNumber((pick as any).upper);
-    if (lower === null || upper === null) return null;
-    const days = (pick as any).days ?? 30;
-    const basis = expectedMove?.iv ? 'IV' : 'HV';
-    return `${days}日 1σ 区间 $${lower.toFixed(2)} - $${upper.toFixed(2)}（基于${basis}）`;
-  })();
+  const expectedMove = pickExpectedMove(volComponents?.expected_move);
+  const volDesc = describeIvHvDelta(volDelta);
+  const volRangeLine = formatExpectedMoveRange(expectedMove);
 
   const technicalComponents = factors?.technical?.components as { volume_z?: unknown } | undefined;
   const volumeZ = safeNumber(technicalComponents?.volume_z);
 
-  const flowComponents = factors?.flow?.components as { put_call?: { put_call_ratio?: unknown }; institutional_count?: unknown } | undefined;
+  const flowComponents = factors?.flow?.components as FlowComponents | undefined;
   const pcr = safeNumber(flowComponents?.put_call?.put_call_ratio);
-  const instCount = safeNumber(flowComponents?.institutional_count);
+  const institutionalTrend = flowComponents?.institutional_trend;
+  const instCount = safeNumber(flowComponents?.institutional_count ?? institutionalTrend?.latest_holder_count);
+  const trendSummary = describeInstitutionalTrendSummary(institutionalTrend);
+  const sourceSummary = describeInstitutionalSource(institutionalTrend, flowComponents?.institutional_sources);
 
   const flowLinePrimary = `${describeVolume(volumeZ)} · ${describePcr(pcr)}`;
   const flowLineSecondary = instCount !== null ? `机构持仓记录数：${instCount}` : '机构持仓等待更新';
+  const flowLines = [flowLinePrimary, flowLineSecondary, `${trendSummary.text} · ${sourceSummary}`];
 
   const industrySummary = factors?.industry?.summary;
   const catalystSummary = factors?.catalyst?.summary;
@@ -141,19 +233,19 @@ export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCa
       <CardContent>
         <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
           <SnapshotItem title="基础行情" badge="价格" emoji="📌" lines={[priceLine]} />
-        <SnapshotItem
-          title="波动率"
-          badge="IV vs HV 差值"
-          emoji="🔄"
-          lines={[volDesc.text, volRangeLine ?? '基于 AION Volatility 因子 (IV-HV)']}
-          tone={volDesc.tone}
-        />
+          <SnapshotItem
+            title="波动率"
+            badge="IV vs HV 差值"
+            emoji="🔄"
+            lines={[volDesc.text, volRangeLine ?? '基于 AION Volatility 因子 (IV-HV)']}
+            tone={volDesc.tone}
+          />
           <SnapshotItem
             title="资金与成交"
             badge="成交与期权情绪"
             emoji="🔍"
-            lines={[flowLinePrimary, flowLineSecondary]}
-            tone="neutral"
+            lines={flowLines}
+            tone={trendSummary.tone}
           />
           <SnapshotItem
             title="行业与叙事"
@@ -163,6 +255,7 @@ export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCa
             tone="neutral"
           />
         </div>
+        <InstitutionalTrendTimeline trend={institutionalTrend} />
       </CardContent>
     </Card>
   );

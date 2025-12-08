@@ -19,14 +19,24 @@ import { FactorGrid } from '@/components/factor-grid';
 import { useAionEngine } from '@/hooks/use-aion-engine';
 import { normalizeAionResult } from '@/lib/aion-normalizer';
 import { factorLabels } from '@/lib/factor-labels';
+import { safeNumber } from '@/lib/numbers';
 import { fetchDashboardSummary } from '@/lib/requests/dashboard';
 import { cn } from '@/lib/utils';
 import { fetchOhlc } from '@/lib/requests/market';
 import { fetchFactorMeta } from '@/lib/requests/factor-meta';
+import { describeIvHvDelta, formatExpectedMoveRange, ivHvBadgeLabel as buildIvHvBadgeLabel, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import type { FactorKey } from '@/types/aion';
 import { RefreshCcw } from 'lucide-react';
 
 const prettyKey = (key: string) => key.replace(/^.+?\./, '').replace(/_/g, ' ').toUpperCase();
+
+type NormalizedEventComponent = {
+  label?: string;
+  description?: string;
+  date?: string;
+  formattedDate?: string | null;
+  source?: string;
+};
 
 export default function DashboardPage() {
   const searchParams = useSearchParams();
@@ -182,44 +192,21 @@ export default function DashboardPage() {
     liveQuote && Number.isFinite(liveQuote.pct) ? `${liveQuote.pct >= 0 ? '+' : ''}${liveQuote.pct.toFixed(2)}%` : '—';
   const ivHvDelta = useMemo(() => {
     const components = displayResult?.factors?.volatility?.components as { iv_vs_hv?: unknown } | undefined;
-    const raw = components?.iv_vs_hv;
-    if (raw === null || raw === undefined) return null;
-    const num = typeof raw === 'number' ? raw : Number(raw);
-    return Number.isFinite(num) ? num : null;
+    return safeNumber(components?.iv_vs_hv);
   }, [displayResult?.factors?.volatility?.components]);
   const expectedMove = useMemo(() => {
-    const components = displayResult?.factors?.volatility?.components as { expected_move?: { iv?: Record<string, unknown>; hv?: Record<string, unknown> } } | undefined;
-    return components?.expected_move;
+    const components = displayResult?.factors?.volatility?.components as { expected_move?: RawExpectedMove } | undefined;
+    return pickExpectedMove(components?.expected_move);
   }, [displayResult?.factors?.volatility?.components]);
-  const ivHvBadgeLabel = useMemo(() => {
-    if (ivHvDelta === null) return 'IV vs HV · —';
-    const pct = ivHvDelta * 100;
-    const formatted = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
-    return `IV vs HV · ${formatted}`;
-  }, [ivHvDelta]);
-  const expectedRangeText = useMemo(() => {
-    const pick = expectedMove?.iv ?? expectedMove?.hv;
-    if (!pick) return null;
-    const lower = Number((pick as any).lower);
-    const upper = Number((pick as any).upper);
-    if (!Number.isFinite(lower) || !Number.isFinite(upper)) return null;
-    const days = (pick as any).days ?? 30;
-    const basis = expectedMove?.iv ? 'IV' : 'HV';
-    return `${days}日 1σ 区间 $${lower.toFixed(2)} - $${upper.toFixed(2)}（基于${basis}）`;
-  }, [expectedMove]);
+  const ivHvBadgeText = useMemo(() => buildIvHvBadgeLabel(ivHvDelta), [ivHvDelta]);
+  const expectedRangeText = useMemo(() => formatExpectedMoveRange(expectedMove), [expectedMove]);
   const volumeZ = useMemo(() => {
     const components = displayResult?.factors?.technical?.components as { volume_z?: unknown } | undefined;
-    const raw = components?.volume_z;
-    if (raw === null || raw === undefined) return null;
-    const num = typeof raw === 'number' ? raw : Number(raw);
-    return Number.isFinite(num) ? num : null;
+    return safeNumber(components?.volume_z);
   }, [displayResult?.factors?.technical?.components]);
   const putCall = useMemo(() => {
     const components = displayResult?.factors?.flow?.components as { put_call?: { put_call_ratio?: unknown } } | undefined;
-    const ratio = components?.put_call?.put_call_ratio;
-    if (ratio === null || ratio === undefined) return null;
-    const num = typeof ratio === 'number' ? ratio : Number(ratio);
-    return Number.isFinite(num) ? num : null;
+    return safeNumber(components?.put_call?.put_call_ratio);
   }, [displayResult?.factors?.flow?.components]);
   const narrativeText = useMemo(() => {
     const catalyst = displayResult?.factors?.catalyst?.summary;
@@ -229,10 +216,8 @@ export default function DashboardPage() {
     return candidate.replace(/^Score\s*[:]*\s*[0-9.]+\s*(?:·|:)?\s*/i, '').trim();
   }, [displayResult?.factors?.catalyst?.summary, displayResult?.factors?.industry?.summary]);
   const volSnapshot = useMemo(() => {
-    let base = 'Vol: IV 接近 HV · 中性';
-    if (ivHvDelta === null) base = 'Vol: 等待 IV vs HV 计算';
-    else if (ivHvDelta > 0.05) base = 'Vol: IV 高于 HV · 期权偏贵';
-    else if (ivHvDelta < -0.05) base = 'Vol: IV 低于 HV · 期权偏便宜';
+    const desc = describeIvHvDelta(ivHvDelta);
+    const base = `Vol: ${desc.text}`;
     return expectedRangeText ? `${base} · ${expectedRangeText}` : base;
   }, [ivHvDelta, expectedRangeText]);
   const flowSnapshot = useMemo(() => {
@@ -243,9 +228,26 @@ export default function DashboardPage() {
     return `Flow: ${volumePart} · ${pcrPart}`;
   }, [volumeZ, putCall]);
   const factorComponents = factorDialog?.components as Record<string, any> | undefined;
+  const isCatalystDialog = factorDialog?.key === 'catalyst';
   const toNum = (val: unknown) => {
     const num = Number(val);
     return Number.isFinite(num) ? num : null;
+  };
+  const formatEventDate = (value?: string) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+  };
+  const normalizeEventComponent = (raw: any): NormalizedEventComponent | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : undefined;
+    const description = typeof raw.description === 'string' && raw.description.trim() ? raw.description.trim() : undefined;
+    const date = typeof raw.date === 'string' && raw.date.trim() ? raw.date.trim() : undefined;
+    const source = typeof raw.source === 'string' && raw.source.trim() ? raw.source.trim() : undefined;
+    const formattedDate = formatEventDate(date);
+    if (!label && !description && !date) return null;
+    return { label, description, date, formattedDate, source };
   };
   const weightContext = useMemo(() => {
     const weights = factorComponents?.weights_used;
@@ -299,6 +301,18 @@ export default function DashboardPage() {
       };
     });
   }, [factorScoreSummary, weightContext]);
+  const selectedEvent = useMemo(() => normalizeEventComponent(factorComponents?.selected_event), [factorComponents]);
+  const eventCandidates = useMemo(() => {
+    const raw = factorComponents?.event_candidates;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item) => normalizeEventComponent(item))
+      .filter((item): item is NormalizedEventComponent => Boolean(item));
+  }, [factorComponents]);
+  const eventSourceCount = useMemo(() => {
+    const val = toNum(factorComponents?.event_source_count);
+    return val !== null ? Math.max(0, Math.round(val)) : null;
+  }, [factorComponents]);
   const componentDetails = useMemo(() => {
     if (!factorComponents) return [];
     const exclude = new Set([
@@ -309,6 +323,9 @@ export default function DashboardPage() {
       'citations',
       'asof_date',
       'confidence',
+      'selected_event',
+      'event_candidates',
+      'event_source_count',
     ]);
     const formatValue = (key: string, val: any) => {
       if (val === null || val === undefined) return null;
@@ -361,7 +378,7 @@ export default function DashboardPage() {
               <div className="flex items-baseline gap-3">
                 <h1 className="text-4xl font-semibold tracking-tight">{ticker}</h1>
               </div>
-              <Badge variant="warning">{ivHvBadgeLabel}</Badge>
+              <Badge variant="warning">{ivHvBadgeText}</Badge>
             </div>
             <p className="text-sm text-slate-400">
               Live Price{' '}
@@ -432,34 +449,6 @@ export default function DashboardPage() {
           </Card>
         </section>
 
-        <section className="grid gap-6">
-          <Card>
-            <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <CardTitle>结构化 K 线</CardTitle>
-                <CardDescription>蜡烛 + 均线 + 波动率带</CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {ohlcLoading || ohlcFetching ? (
-                <Skeleton className="h-[320px] w-full rounded-xl" />
-              ) : ohlcError ? (
-                <div className="rounded-lg border border-bearish/30 bg-bearish/10 p-3 text-sm text-bearish">
-                  {ohlcErrorMessage}
-                </div>
-              ) : (
-                <StructureChart
-                  candles={structureData.candles}
-                  ma20={structureData.ma20}
-                  ma50={structureData.ma50}
-                  ma200={structureData.ma200}
-                  bands={structureData.bands}
-                />
-              )}
-            </CardContent>
-          </Card>
-        </section>
-
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <div>
@@ -485,7 +474,7 @@ export default function DashboardPage() {
           />
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-2">
+        <section className="grid gap-6">
           <Card>
             <CardHeader>
               <CardTitle>智能研报</CardTitle>
@@ -502,20 +491,32 @@ export default function DashboardPage() {
               </div>
             </CardContent>
           </Card>
+        </section>
 
+        <section className="grid gap-6">
           <Card>
-            <CardHeader>
-              <CardTitle>加载骨架</CardTitle>
-              <CardDescription>用于 Pending / Processing 状态的占位样式</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Skeleton className="h-10 w-2/3" />
-              <Skeleton className="h-4 w-1/2" />
-              <div className="grid grid-cols-2 gap-3">
-                <Skeleton className="h-20 w-full" />
-                <Skeleton className="h-20 w-full" />
+            <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle>结构化 K 线</CardTitle>
+                <CardDescription>蜡烛 + 均线 + 波动率带</CardDescription>
               </div>
-              <Skeleton className="h-32 w-full" />
+            </CardHeader>
+            <CardContent>
+              {ohlcLoading || ohlcFetching ? (
+                <Skeleton className="h-[320px] w-full rounded-xl" />
+              ) : ohlcError ? (
+                <div className="rounded-lg border border-bearish/30 bg-bearish/10 p-3 text-sm text-bearish">
+                  {ohlcErrorMessage}
+                </div>
+              ) : (
+                <StructureChart
+                  candles={structureData.candles}
+                  ma20={structureData.ma20}
+                  ma50={structureData.ma50}
+                  ma200={structureData.ma200}
+                  bands={structureData.bands}
+                />
+              )}
             </CardContent>
           </Card>
         </section>
@@ -568,6 +569,44 @@ export default function DashboardPage() {
                     <p className="text-xs text-slate-400">暂无子因子得分，可重新运行引擎。</p>
                   )}
                 </div>
+                {isCatalystDialog ? (
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">近期催化事件</p>
+                    {selectedEvent ? (
+                      <div className="rounded border border-white/10 bg-black/20 p-2 text-xs text-slate-200">
+                        <p className="text-sm font-medium text-slate-100">{selectedEvent.label ?? '事件'}</p>
+                        {selectedEvent.description ? (
+                          <p className="text-xs text-slate-300">{selectedEvent.description}</p>
+                        ) : null}
+                        <p className="text-[11px] text-slate-500">
+                          {selectedEvent.formattedDate ?? selectedEvent.date ?? '日期待定'}
+                          {selectedEvent.source ? ` · 来源 ${selectedEvent.source}` : ''}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400">暂无结构化事件，可刷新或等待更多新闻。</p>
+                    )}
+                    {eventCandidates.length ? (
+                      <div className="space-y-1 text-xs text-slate-300">
+                        {eventCandidates.map((candidate, idx) => (
+                          <div key={`${candidate.label ?? 'event'}-${candidate.date ?? idx}`} className="flex flex-col rounded bg-black/10 p-2">
+                            <span className="text-[11px] uppercase tracking-wide text-slate-500">
+                              {candidate.label ?? 'EVENT'}
+                            </span>
+                            {candidate.description ? <span className="text-slate-200">{candidate.description}</span> : null}
+                            <span className="text-[11px] text-slate-500">
+                              {candidate.formattedDate ?? candidate.date ?? '日期待定'}
+                              {candidate.source ? ` · ${candidate.source}` : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {eventSourceCount ? (
+                      <p className="text-[11px] text-slate-500">事件来源映射 {eventSourceCount} 条</p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-500">原始数据</p>
                   {componentDetails.length ? (

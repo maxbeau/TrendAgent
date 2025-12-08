@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -518,7 +518,7 @@ class YFinanceProvider(BaseProvider):
         *,
         expiration_date: Optional[str] = None,
         spot_price: Optional[float] = None,
-        window: int = 20,
+        window: int = 30,
     ) -> Dict[str, Any]:
         def _compute_iv_hv() -> Dict[str, Any]:
             ticker = self._make_ticker(underlying)
@@ -545,11 +545,17 @@ class YFinanceProvider(BaseProvider):
 
             hv = None
             try:
-                hist = ticker.history(period="1y", interval="1d")
-                if hist is not None and not hist.empty and len(hist.index) > window:
-                    returns = hist["Close"].pct_change().dropna()
-                    if not returns.empty:
-                        hv = float(returns.tail(window).std() * math.sqrt(252))
+                lookback_window = max(int(window or 0), 1)
+                lookback_days = max(lookback_window + 5, lookback_window * 2, 30)
+                start = datetime.utcnow() - timedelta(days=lookback_days)
+                hist = ticker.history(start=start, interval="1d")
+                if hist is not None and not hist.empty:
+                    closes = hist["Close"].dropna()
+                    recent = closes.tail(lookback_window + 1)
+                    if len(recent.index) > 1:
+                        returns = recent.pct_change().dropna()
+                        if not returns.empty:
+                            hv = float(returns.std() * math.sqrt(252))
             except Exception:
                 hv = None
 

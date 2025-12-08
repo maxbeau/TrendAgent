@@ -3,6 +3,8 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { safeNumber } from '@/lib/numbers';
+import { pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import { cn } from '@/lib/utils';
 import type { AionAnalysisResult } from '@/types/aion';
 
@@ -43,15 +45,6 @@ function sizingHint(plan?: AionAnalysisResult['action_plan']) {
   return 'Standard Size';
 }
 
-function safeNumber(val: unknown): number | null {
-  if (typeof val === 'number' && Number.isFinite(val)) return val;
-  if (typeof val === 'string') {
-    const n = Number(val);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
 export function ActionCard({ result, fallbackTicker, isCalculating, isLoading }: ActionCardProps) {
   const hasResult = Boolean(result);
   const showSkeleton = (isLoading || isCalculating) && !hasResult;
@@ -60,13 +53,11 @@ export function ActionCard({ result, fallbackTicker, isCalculating, isLoading }:
   const totalScorePct = Math.min(Math.max(totalScoreRaw, 0), 5) * 20; // 转换为百分制
   const signal = result?.signal ?? 'WAIT';
   const actionLabel = result?.action_card ?? 'Pending Signal';
+  const volComponents = result?.factors?.volatility?.components as { expected_move?: RawExpectedMove } | undefined;
+  const expectedMove = pickExpectedMove(volComponents?.expected_move);
   const derivedPlan = (() => {
-    const volComponents = result?.factors?.volatility?.components as { expected_move?: { iv?: Record<string, unknown>; hv?: Record<string, unknown> } } | undefined;
-    const pick = volComponents?.expected_move?.iv ?? volComponents?.expected_move?.hv;
-    if (!pick) return undefined;
-    const spot = safeNumber((pick as any).spot);
-    const upper = safeNumber((pick as any).upper);
-    const lower = safeNumber((pick as any).lower);
+    if (!expectedMove) return undefined;
+    const { spot, upper, lower } = expectedMove;
     if (upper === null && lower === null && spot === null) return undefined;
     const target_price = upper ?? (spot !== null ? spot * 1.05 : null);
     const stop_loss = lower ?? (spot !== null ? spot * 0.97 : null);
@@ -89,17 +80,15 @@ export function ActionCard({ result, fallbackTicker, isCalculating, isLoading }:
     return `$${num.toFixed(2)}`;
   };
   const entryRange = (() => {
-    const volComponents = result?.factors?.volatility?.components as { expected_move?: { iv?: Record<string, unknown>; hv?: Record<string, unknown> } } | undefined;
-    const pick = volComponents?.expected_move?.iv ?? volComponents?.expected_move?.hv;
-    const lower = pick ? safeNumber((pick as any).lower) : null;
-    const upper = pick ? safeNumber((pick as any).upper) : null;
+    const lower = expectedMove?.lower ?? null;
+    const upper = expectedMove?.upper ?? null;
     const target = actionPlan?.target_price ?? null;
     const stop = actionPlan?.stop_loss ?? null;
     return {
       lower: lower ?? stop ?? null,
       upper: upper ?? target ?? null,
-      basis: pick ? (volComponents?.expected_move?.iv ? 'IV' : 'HV') : null,
-      days: pick ? (pick as any).days ?? 30 : null,
+      basis: expectedMove?.basis ?? null,
+      days: expectedMove?.days ?? null,
     };
   })();
   const formatRange = (lower?: number | null, upper?: number | null, suffix?: string) => {
