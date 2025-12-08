@@ -11,7 +11,7 @@ from sqlalchemy.future import select
 
 from app.api.serializers import serialize_analysis_score
 from app.db import AsyncSessionLocal, get_db
-from app.models import AnalysisScore
+from app.models import AnalysisScore, AionModel
 from app.services import aion_engine
 from app.services.event_intensity import summarize_event_intensity
 from app.services.policy_tailwind import summarize_policy_tailwind
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 class CalculationRequest(BaseModel):
     ticker: str
-    model_version: str = "v8.0"
+    model_version: Optional[str] = None
 
 
 class PolicyTailwindRequest(BaseModel):
@@ -117,6 +117,7 @@ async def run_calculation_in_background(
                 model_version=model_version,
                 factor_weights=factor_weights,
                 category_weights=category_weights,
+                db=db,
             )
             factors_payload = jsonable_encoder(result_data["factors"])
 
@@ -141,9 +142,20 @@ async def run_calculation_in_background(
 async def calculate_aion_score(
     background_tasks: BackgroundTasks,
     payload: CalculationRequest,
+    db: AsyncSession = Depends(get_db),
 ) -> CalculationTaskResponse:
+    model_version = payload.model_version
+    if not model_version:
+        # fetch the latest model version from the database
+        stmt = select(AionModel).order_by(AionModel.created_at.desc())
+        result = await db.execute(stmt)
+        latest_model = result.scalars().first()
+        if not latest_model:
+            raise HTTPException(status_code=404, detail="No AION model found in the database.")
+        model_version = latest_model.model_name
+
     task_id = str(uuid.uuid4())
-    background_tasks.add_task(run_calculation_in_background, task_id, payload.ticker, payload.model_version)
+    background_tasks.add_task(run_calculation_in_background, task_id, payload.ticker, model_version)
     return CalculationTaskResponse(message="Calculation started", task_id=task_id)
 
 

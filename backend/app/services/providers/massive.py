@@ -180,3 +180,52 @@ class MassiveProvider(HTTPProvider):
     async def fetch_holders(self, ticker: str) -> List[Dict[str, Any]]:
         # Not available on current Massive plan; return empty for fallback to kick in.
         return []
+
+    async def fetch_inflation_expectations(
+        self,
+        *,
+        horizon: Optional[str] = None,
+        limit: int = 120,
+    ) -> List[Dict[str, Any]]:
+        """
+        Cleveland Fed / FedWatch equivalent time series.
+        """
+        params: Dict[str, Any] = {
+            "limit": min(limit, 1000),
+            "horizon": horizon,
+        }
+        data = await self._get(
+            "/fed/v1/inflation-expectations",
+            params=_strip_none(params),
+            headers=self._auth_headers(),
+        )
+        if isinstance(data, dict):
+            results = data.get("results", [])
+        elif isinstance(data, list):
+            results = data  # pragma: no cover - API variant
+        else:
+            results = []
+        return results[:limit]
+
+    async def fetch_treasury_yields(
+        self,
+        *,
+        maturity: Optional[str] = None,
+        limit: int = 120,
+    ) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {
+            "limit": min(limit, 1000),
+            "maturity": maturity,
+        }
+        data = await self._get(
+            "/fed/v1/treasury-yields",
+            params=_strip_none(params),
+            headers=self._auth_headers(),
+        )
+        if isinstance(data, dict):
+            results = data.get("results", [])
+        elif isinstance(data, list):
+            results = data  # pragma: no cover - API variant
+        else:
+            results = []
+        return results[:limit]

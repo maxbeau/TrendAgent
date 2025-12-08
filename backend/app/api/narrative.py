@@ -3,7 +3,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, constr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -16,7 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class NarrativeRequest(BaseModel):
-    ticker: constr(strip_whitespace=True, min_length=1, max_length=10, regex=r"^[A-Za-z0-9\.\-]+$")
+    ticker: constr(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=10,
+        pattern=r"^[A-Za-z0-9\.\-]+$",
+    )
     model_version: Optional[str] = None
 
 

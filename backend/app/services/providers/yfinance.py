@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 from datetime import date, datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 import yfinance as yf
@@ -46,6 +46,58 @@ def _infer_spot(ticker: yf.Ticker, provided_spot: Optional[float]) -> Optional[f
         return None
 
     return None
+
+
+def _resolve_expiration(ticker: yf.Ticker, preferred: Optional[str]) -> Optional[str]:
+    expirations = getattr(ticker, "options", None) or []
+    if preferred:
+        return preferred
+    return expirations[0] if expirations else None
+
+
+def _option_chain(
+    ticker: yf.Ticker, preferred: Optional[str]
+) -> Tuple[Optional[Any], Optional[str]]:
+    target = _resolve_expiration(ticker, preferred)
+    if not target:
+        return None, None
+    chain = ticker.option_chain(target)
+    return chain, target
+
+
+def _closest_iv_to_spot(frame: Optional[pd.DataFrame], spot: Optional[float]) -> Optional[float]:
+    if frame is None or frame.empty or spot is None:
+        return None
+    best_iv: Optional[float] = None
+    best_diff = float("inf")
+    for _, row in frame.iterrows():
+        iv = row.get("impliedVolatility")
+        strike = row.get("strike")
+        if iv is None or strike is None:
+            continue
+        try:
+            iv_f = float(iv)
+            strike_f = float(strike)
+        except (TypeError, ValueError):
+            continue
+        if iv_f <= 0 or not math.isfinite(iv_f) or not math.isfinite(strike_f):
+            continue
+        diff = abs(strike_f - float(spot))
+        if diff < best_diff:
+            best_diff = diff
+            best_iv = iv_f
+    return best_iv
+
+
+def _atm_iv_from_chain(chain: Optional[Any], spot: Optional[float]) -> Optional[float]:
+    if chain is None or spot is None:
+        return None
+    values = []
+    for frame in (getattr(chain, "calls", None), getattr(chain, "puts", None)):
+        iv = _closest_iv_to_spot(frame, spot)
+        if iv is not None:
+            values.append(iv)
+    return sum(values) / len(values) if values else None
 
 
 class YFinanceProvider(BaseProvider):
@@ -112,12 +164,9 @@ class YFinanceProvider(BaseProvider):
     ) -> List[Dict[str, Any]]:
         def _load_chain() -> List[Dict[str, Any]]:
             ticker = self._make_ticker(underlying)
-            expirations = ticker.options or []
-            target_exp = expiration_date or (expirations[0] if expirations else None)
-            if not target_exp:
+            chain, target_exp = _option_chain(ticker, expiration_date)
+            if not target_exp or chain is None:
                 return []
-
-            chain = ticker.option_chain(target_exp)
             frames = []
             if contract_type in (None, "call", "calls"):
                 frames.append(chain.calls.assign(side="call"))
@@ -209,9 +258,8 @@ class YFinanceProvider(BaseProvider):
     ) -> Dict[str, Any]:
         def _compute_ratio() -> Dict[str, Any]:
             ticker = self._make_ticker(underlying)
-            expirations = ticker.options or []
-            target_exp = expiration_date or (expirations[0] if expirations else None)
-            if not target_exp:
+            chain, target_exp = _option_chain(ticker, expiration_date)
+            if not target_exp or chain is None:
                 return {
                     "underlying": underlying,
                     "expiration": None,
@@ -219,8 +267,6 @@ class YFinanceProvider(BaseProvider):
                     "call_volume": 0.0,
                     "put_volume": 0.0,
                 }
-
-            chain = ticker.option_chain(target_exp)
 
             def _sum_volume(frame: pd.DataFrame) -> float:
                 if frame is None or frame.empty or "volume" not in frame:
@@ -270,9 +316,8 @@ class YFinanceProvider(BaseProvider):
                     "put_gamma_exposure": None,
                 }
 
-            expirations = ticker.options or []
-            target_exp = expiration_date or (expirations[0] if expirations else None)
-            if not target_exp:
+            chain, target_exp = _option_chain(ticker, expiration_date)
+            if not target_exp or chain is None:
                 return {
                     "underlying": underlying,
                     "expiration": None,
@@ -310,8 +355,6 @@ class YFinanceProvider(BaseProvider):
                     "call_gamma_exposure": None,
                     "put_gamma_exposure": None,
                 }
-
-            chain = ticker.option_chain(target_exp)
 
             def _side_gex(frame: pd.DataFrame, sign: float) -> float:
                 if frame is None or frame.empty:
@@ -375,9 +418,8 @@ class YFinanceProvider(BaseProvider):
                     "skew_25d": None,
                 }
 
-            expirations = ticker.options or []
-            target_exp = expiration_date or (expirations[0] if expirations else None)
-            if not target_exp:
+            chain, target_exp = _option_chain(ticker, expiration_date)
+            if not target_exp or chain is None:
                 return {
                     "underlying": underlying,
                     "expiration": None,
@@ -419,8 +461,6 @@ class YFinanceProvider(BaseProvider):
                     "skew_25d": None,
                 }
 
-            chain = ticker.option_chain(target_exp)
-
             def _calc_d1(strike: float, iv: float) -> Optional[float]:
                 if strike <= 0 or iv <= 0:
                     return None
@@ -451,30 +491,9 @@ class YFinanceProvider(BaseProvider):
                         best_iv = float(iv)
                 return best_iv
 
-            def _atm_iv(frame: pd.DataFrame) -> Optional[float]:
-                if frame is None or frame.empty:
-                    return None
-                best_iv: Optional[float] = None
-                best_diff = float("inf")
-                for _, row in frame.iterrows():
-                    iv = row.get("impliedVolatility")
-                    strike = row.get("strike")
-                    if iv is None or strike is None:
-                        continue
-                    if not math.isfinite(iv) or iv <= 0:
-                        continue
-                    if not math.isfinite(strike):
-                        continue
-                    diff = abs(float(strike) - float(spot))
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_iv = float(iv)
-                return best_iv
-
             call_25 = _nearest_iv_by_delta(chain.calls, target_delta=0.25, is_call=True)
             put_25 = _nearest_iv_by_delta(chain.puts, target_delta=-0.25, is_call=False)
-            atm_candidates = [v for v in (_atm_iv(chain.calls), _atm_iv(chain.puts)) if v is not None]
-            atm_iv = sum(atm_candidates) / len(atm_candidates) if atm_candidates else None
+            atm_iv = _atm_iv_from_chain(chain, spot)
 
             skew = None
             if atm_iv and call_25 is not None and put_25 is not None:
@@ -514,38 +533,15 @@ class YFinanceProvider(BaseProvider):
                     "iv_vs_hv": None,
                 }
 
-            expirations = ticker.options or []
-            target_exp = expiration_date or (expirations[0] if expirations else None)
-
+            target_exp = _resolve_expiration(ticker, expiration_date)
             atm_iv = None
             if target_exp:
                 try:
-                    chain = ticker.option_chain(target_exp)
-                    atm_candidates = []
-                    for frame in (chain.calls, chain.puts):
-                        if frame is None or frame.empty:
-                            continue
-                        best_iv = None
-                        best_diff = float("inf")
-                        for _, row in frame.iterrows():
-                            iv = row.get("impliedVolatility")
-                            strike = row.get("strike")
-                            if iv is None or strike is None:
-                                continue
-                            if not math.isfinite(iv) or iv <= 0:
-                                continue
-                            if not math.isfinite(strike):
-                                continue
-                            diff = abs(float(strike) - float(spot))
-                            if diff < best_diff:
-                                best_diff = diff
-                                best_iv = float(iv)
-                        if best_iv is not None:
-                            atm_candidates.append(best_iv)
-                    if atm_candidates:
-                        atm_iv = sum(atm_candidates) / len(atm_candidates)
+                    chain, _ = _option_chain(ticker, target_exp)
                 except Exception:
-                    atm_iv = None
+                    chain = None
+                if chain is not None:
+                    atm_iv = _atm_iv_from_chain(chain, spot)
 
             hv = None
             try:
@@ -607,6 +603,25 @@ class YFinanceProvider(BaseProvider):
             return {"next_earnings_date": next_date, "raw": data}
 
         return await self._to_thread(_load_calendar)
+
+    async def fetch_peer_tickers(self, ticker: str, *, limit: int = 10) -> List[str]:
+        def _load_peers() -> List[str]:
+            peers: List[str] = []
+            t = self._make_ticker(ticker)
+            get_peers = getattr(t, "get_peers", None)
+            if callable(get_peers):
+                try:
+                    raw = get_peers()
+                except Exception:
+                    raw = []
+                if isinstance(raw, (list, tuple, set)):
+                    peers.extend(str(item).upper() for item in raw if isinstance(item, str))
+            return peers[:limit]
+
+        try:
+            return await self._to_thread(_load_peers)
+        except ProviderError as exc:
+            raise ProviderError(f"Failed to fetch peers for {ticker}: {exc}") from exc
 
     async def fetch_financials(self, ticker: str) -> Dict[str, Any]:
         def _load_financials() -> Dict[str, Any]:

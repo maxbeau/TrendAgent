@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import asyncio
+import logging
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 
 DEFAULT_TIMEOUT = 20.0
+MAX_RETRIES = 2
+RETRY_STATUS = {429, 503}
+logger = logging.getLogger(__name__)
 
 
 class ProviderError(Exception):
@@ -70,19 +75,92 @@ class HTTPProvider(BaseProvider):
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
+        def _log_rate_event(
+            *,
+            status: int,
+            detail: str = "",
+            retry_after: Optional[str] = None,
+            attempt: int = 1,
+            will_retry: bool = False,
+            url: Optional[str] = None,
+        ) -> None:
+            # Avoid泄漏敏感信息，仅记录元数据。
+            logger.warning(
+                "provider_rate_event",
+                extra={
+                    "provider": getattr(self, "name", self.__class__.__name__),
+                    "status": status,
+                    "path": path,
+                    "url": url,
+                    "retry_after": retry_after,
+                    "param_keys": sorted(list((params or {}).keys())),
+                    "auth_header": bool(headers and any(k.lower() == "authorization" for k in headers)),
+                    "detail": detail[:200],
+                    "attempt": attempt,
+                    "will_retry": will_retry,
+                },
+            )
+
         async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
-            try:
-                response = await client.get(path, params=_strip_none(params), headers=headers)
-                response.raise_for_status()
-            except httpx.HTTPStatusError as exc:  # pragma: no cover - network errors
-                raise ProviderError(f"HTTP {exc.response.status_code} for {path}: {exc.response.text}") from exc
-            except httpx.HTTPError as exc:  # pragma: no cover - network errors
-                raise ProviderError(f"HTTP error for {path}: {exc}") from exc
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    response = await client.get(path, params=_strip_none(params), headers=headers)
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as exc:  # pragma: no cover - network errors
+                    status = exc.response.status_code
+                    detail = exc.response.text
+                    retry_after = exc.response.headers.get("Retry-After")
+                    if status in RETRY_STATUS and attempt < MAX_RETRIES:
+                        delay = float(retry_after) if retry_after and retry_after.isdigit() else 0.5 * (2**attempt)
+                        _log_rate_event(
+                            status=status,
+                            detail=detail,
+                            retry_after=retry_after,
+                            attempt=attempt + 1,
+                            will_retry=True,
+                            url=str(exc.request.url) if exc.request else None,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    if status >= 429:
+                        _log_rate_event(
+                            status=status,
+                            detail=detail,
+                            retry_after=retry_after,
+                            attempt=attempt + 1,
+                            will_retry=False,
+                            url=str(exc.request.url) if exc.request else None,
+                        )
+                    else:
+                        _log_rate_event(status=status, detail=str(exc))
+                    raise ProviderError(f"HTTP {exc.response.status_code} for {path}: {exc.response.text}") from exc
+                except httpx.HTTPError as exc:  # pragma: no cover - network errors
+                    _log_rate_event(status=0, detail=str(exc))
+                    raise ProviderError(f"HTTP error for {path}: {exc}") from exc
 
         data: Dict[str, Any] = response.json() if response.content else {}
         # Some providers wrap errors inside JSON without HTTP status.
-        if isinstance(data, dict) and data.get("error"):
-            raise ProviderError(f"Upstream error for {path}: {data['error']}")
+        if isinstance(data, dict):
+            msg = data.get("error") or data.get("message")
+            status_field = data.get("status")
+            if msg and isinstance(msg, str) and ("too many" in msg.lower() or "rate" in msg.lower()):
+                logger.warning(
+                    "provider_rate_event",
+                    extra={
+                        "provider": getattr(self, "name", self.__class__.__name__),
+                        "status": status_field or 200,
+                        "path": path,
+                        "url": str(response.url),
+                        "retry_after": response.headers.get("Retry-After"),
+                        "param_keys": sorted(list((params or {}).keys())),
+                        "auth_header": bool(headers and any(k.lower() == "authorization" for k in headers)),
+                        "detail": msg[:200],
+                    },
+                )
+                raise ProviderError(f"Upstream rate limit for {path}: {msg}")
+            if msg:
+                raise ProviderError(f"Upstream error for {path}: {msg}")
         return data
 
     async def fetch_equity_daily(

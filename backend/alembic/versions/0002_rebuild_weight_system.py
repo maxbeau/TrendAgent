@@ -107,7 +107,7 @@ def _seed_model_and_weights() -> None:
         )
     )
 
-    model_row = bind.execute(sa.text("SELECT id FROM aion_models WHERE model_name=:name"), {"name": "v8.0"}).first()
+    model_row = bind.execute(sa.text("SELECT id FROM aion_models WHERE model_name=:name"), {"name": "AION v8.0"}).first()
     if model_row:
         model_id = model_row[0]
     else:
@@ -117,7 +117,7 @@ def _seed_model_and_weights() -> None:
                 "INSERT INTO aion_models (id, model_name, description, is_public, created_at) "
                 "VALUES (:id, :name, :description, true, now())"
             ),
-            {"id": model_id, "name": "v8.0", "description": "AION v8.0 baseline model"},
+            {"id": model_id, "name": "AION v8.0", "description": "AION v8.0 baseline model"},
         )
 
     category_weight_table = sa.table(

@@ -9,6 +9,7 @@ fear-greed-index
 httpx
 sqlalchemy
 asyncpg
+greenlet
 python-dotenv
 supabase
 pytest

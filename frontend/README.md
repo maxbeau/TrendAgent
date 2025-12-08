@@ -18,6 +18,8 @@
 
 ## 结构预览
 
-* `pages/index.tsx`：展示仪表盘摘要。
-* `styles/globals.css`：全局简易配色。
+* `app/layout.tsx`：全局布局与字体 (Inter/JetBrains Mono)。
+* `app/globals.css`：Obsidian 主题、Tailwind base/utility。
+* `app/dashboard/page.tsx`：仪表盘骨架页（Phase 1 Skeleton）。
+* `components/ui/*`：shadcn 风格的 Card/Badge/Dialog/Skeleton 基建。
 * `next.config.js`：保留默认配置，可根据需求扩展代理/优化。

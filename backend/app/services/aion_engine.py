@@ -99,6 +99,9 @@ def _aggregate_scores(
             "score": result.score,
             "status": result.status,
             "weight": weight,
+            "summary": getattr(result, "summary", None),
+            "key_evidence": getattr(result, "key_evidence", []),
+            "sources": getattr(result, "sources", []),
             "components": result.components,
             "errors": result.errors,
             "weight_denominator": result.weight_denominator,
@@ -133,7 +136,7 @@ async def calculate(
             raise ValueError("Either weights or db must be provided to calculate AION score.")
         category_weights, factor_weights = await load_model_weights(model_version, db)
 
-    factors = await compute_all_factors(ticker, factor_weights=factor_weights)
+    factors = await compute_all_factors(ticker, factor_weights=factor_weights, db=db)
 
     aggregated = _aggregate_scores(factors, category_weights)
     card = _action_card(aggregated["total_score"])

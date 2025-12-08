@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship
@@ -97,6 +98,9 @@ class AnalysisScore(Base):
     weight_denominator = Column(Float)
     calculated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime, server_default=func.now())
+    __table_args__ = (
+        Index("ix_analysis_scores_ticker_calculated_at", "ticker", "calculated_at"),
+    )
 
 
 class SoftFactorScore(Base):
