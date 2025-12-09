@@ -96,6 +96,12 @@ class AnalysisScore(Base):
     action_card = Column(String(50))
     factors = Column(JSONB, nullable=False)
     weight_denominator = Column(Float)
+    scenarios = Column(JSONB)
+    key_variables = Column(JSONB)
+    stock_strategy = Column(JSONB)
+    option_strategies = Column(JSONB)
+    risk_management = Column(JSONB)
+    execution_notes = Column(JSONB)
     calculated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime, server_default=func.now())
     __table_args__ = (

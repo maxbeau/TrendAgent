@@ -347,6 +347,86 @@ def _extract_numeric_from_record(
     return None
 
 
+def _format_percent(value: Optional[float]) -> Optional[str]:
+    if value is None:
+        return None
+    return f"{value * 100:.1f}%"
+
+
+def _summarize_flow(
+    holder_summary: Dict[str, Any],
+    put_call_payload: Dict[str, Any],
+    gex_payload: Dict[str, Any],
+) -> str:
+    parts: List[str] = []
+    trend_metric = _safe_float(holder_summary.get("trend_metric"))
+    if trend_metric is not None:
+        direction = "回升" if trend_metric >= 0 else "下降"
+        parts.append(f"机构持仓{direction} {_format_percent(abs(trend_metric))}")
+    else:
+        count = holder_summary.get("latest_holder_count")
+        if isinstance(count, (int, float)) and count > 0:
+            parts.append(f"机构覆盖 {int(count)} 家")
+
+    ratio = _safe_float((put_call_payload or {}).get("put_call_ratio"))
+    if ratio is not None:
+        if ratio > 1.2:
+            parts.append(f"Put/Call {ratio:.2f} · 防守升温")
+        elif ratio < 0.8:
+            parts.append(f"Put/Call {ratio:.2f} · 看涨占优")
+        else:
+            parts.append(f"Put/Call {ratio:.2f} · 中性")
+
+    total_gamma = _safe_float((gex_payload or {}).get("total_gamma_exposure"))
+    if total_gamma is not None:
+        if total_gamma >= 0:
+            parts.append("正Gamma 提供缓冲")
+        else:
+            parts.append("负Gamma 放大波动")
+
+    return "；".join(part for part in parts if part) or "资金流向数据等待更新"
+
+
+def _summarize_technical(
+    latest_close: Optional[float],
+    ma20: Optional[float],
+    ma50: Optional[float],
+    ma200: Optional[float],
+    rs_metrics: Optional[Dict[str, float]],
+    price_vs_poc: Optional[float],
+) -> str:
+    parts: List[str] = []
+    if ma20 and ma50 and ma200:
+        if ma20 > ma50 > ma200:
+            parts.append("均线多头排列")
+        elif ma20 < ma50 < ma200:
+            parts.append("均线空头排列")
+        else:
+            parts.append("均线结构混沌")
+
+    if rs_metrics and rs_metrics.get("rs") is not None:
+        rs_value = rs_metrics["rs"]
+        if rs_value >= 0.05:
+            parts.append(f"跑赢基准 {_format_percent(rs_value)}")
+        elif rs_value <= -0.05:
+            parts.append(f"落后基准 {_format_percent(abs(rs_value))}")
+        else:
+            parts.append("相对强度中性")
+
+    if price_vs_poc is not None:
+        diff_text = _format_percent(price_vs_poc)
+        if price_vs_poc >= 0.05:
+            parts.append(f"价格高于筹码 {diff_text}")
+        elif price_vs_poc <= -0.05:
+            parts.append(f"价格低于筹码 {diff_text}")
+        else:
+            parts.append("价格接近成本区")
+
+    if not parts and latest_close is not None:
+        parts.append(f"最新收盘 ${latest_close:.2f}")
+    return "；".join(parts)
+
+
 def _records_to_series(
     records: Sequence[Dict[str, Any]],
     *,
@@ -1607,9 +1687,12 @@ async def compute_technical(
     score, weight_denominator, applied_weights = _weighted_average(factor_scores, weights)
     status = "ok" if score is not None else "degraded" if errors else "unavailable"
 
+    summary_text = _summarize_technical(latest_close, ma20, ma50, ma200, rs_metrics, price_vs_poc)
+
     return FactorResult(
         score=score,
         status=status,
+        summary=summary_text,
         components={
             "ma20": ma20,
             "ma50": ma50,
@@ -1674,9 +1757,12 @@ async def compute_flow(
     score, weight_denominator, applied_weights = _weighted_average(factor_scores, weights)
     status = "ok" if score is not None else "degraded" if errors else "unavailable"
 
+    summary_text = _summarize_flow(holder_summary, put_call, gex)
+
     return FactorResult(
         score=score,
         status=status,
+        summary=summary_text,
         components={
             "institutional_count": holder_summary.get("latest_holder_count"),
             "institutional_trend": holder_summary,

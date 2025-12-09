@@ -21,7 +21,8 @@
     "react": "latest",
     "react-dom": "latest",
     "recharts": "^3.5.1",
-    "tailwind-merge": "latest"
+    "tailwind-merge": "latest",
+    "zustand": "^5.0.9"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.17",

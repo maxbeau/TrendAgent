@@ -3,14 +3,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { safeNumber } from '@/lib/numbers';
 import { describeIvHvDelta, formatExpectedMoveRange, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import { cn } from '@/lib/utils';
+import { useLiveQuote } from '@/hooks/use-live-quote';
+import { useAionStore } from '@/store/aion-store';
 import type { AionAnalysisResult } from '@/types/aion';
 
-type LiveQuote = { close: number; change: number; pct: number } | null;
+type LiveQuote = { close: number; change: number; pct: number; dateLabel?: string } | null;
 
 interface MarketSnapshotProps {
-  ticker: string;
-  liveQuote: LiveQuote;
-  ivHvDelta: number | null;
+  ticker?: string;
+  liveQuote?: LiveQuote;
+  ivHvDelta?: number | null;
   factors?: AionAnalysisResult['factors'];
   actionCard?: string;
 }
@@ -119,35 +121,63 @@ function describePcr(pcr: number | null) {
   return 'Put/Call 中性区间';
 }
 
+type SnapshotRichLine = {
+  label: string;
+  value: string;
+  highlight?: boolean;
+};
+
 function SnapshotItem({
   title,
   badge,
   emoji,
-  lines,
+  lines = [],
+  richLines = [],
   tone = 'neutral',
 }: {
   title: string;
   badge: string;
   emoji: string;
-  lines: string[];
+  lines?: string[];
+  richLines?: SnapshotRichLine[];
   tone?: 'bullish' | 'bearish' | 'neutral' | 'warning' | 'muted';
 }) {
+  const primaryText = lines?.[0] ?? richLines?.[0]?.value ?? '等待更新';
+  const extraLines = (lines ?? []).slice(1);
+
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <div className="space-y-1">
           <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{title}</p>
           <p className={cn('text-sm font-medium leading-relaxed', toneClass(tone))}>
-            {emoji} {lines[0]}
+            {emoji} {primaryText}
           </p>
         </div>
         <Badge variant="outline">{badge}</Badge>
       </div>
-      {lines.slice(1).map((line) => (
+      {extraLines.map((line) => (
         <p key={line} className="mt-1 text-xs text-slate-400">
           {line}
         </p>
       ))}
+      {richLines?.length ? (
+        <div className="mt-3 space-y-1">
+          {richLines.map((line) => (
+            <div key={`${line.label}-${line.value}`} className="flex items-center justify-between text-xs">
+              <span className="uppercase tracking-[0.18em] text-slate-500">{line.label}</span>
+              <span
+                className={cn(
+                  'text-right text-slate-300',
+                  line.highlight ? 'font-medium text-slate-100' : '',
+                )}
+              >
+                {line.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -190,19 +220,23 @@ function InstitutionalTrendTimeline({ trend }: { trend?: InstitutionalTrend | nu
   );
 }
 
-export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCard }: MarketSnapshotProps) {
-  const priceLine = formatPrice(liveQuote);
-
-  const volComponents = factors?.volatility?.components as { iv_vs_hv?: unknown; expected_move?: RawExpectedMove } | undefined;
-  const volDelta = safeNumber(ivHvDelta ?? volComponents?.iv_vs_hv);
+export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCard }: MarketSnapshotProps = {}) {
+  const analysis = useAionStore((state) => state.analysis);
+  const derivedLiveQuote = useLiveQuote();
+  const resolvedTicker = ticker ?? 'NVDA';
+  const resolvedFactors = factors ?? analysis?.factors;
+  const resolvedActionCard = actionCard ?? analysis?.action_card;
+  const volComponents = resolvedFactors?.volatility?.components as { iv_vs_hv?: unknown; expected_move?: RawExpectedMove } | undefined;
+  const storeIvHvDelta = safeNumber(volComponents?.iv_vs_hv);
+  const volDelta = safeNumber((ivHvDelta ?? storeIvHvDelta) ?? null);
   const expectedMove = pickExpectedMove(volComponents?.expected_move);
   const volDesc = describeIvHvDelta(volDelta);
   const volRangeLine = formatExpectedMoveRange(expectedMove);
 
-  const technicalComponents = factors?.technical?.components as { volume_z?: unknown } | undefined;
+  const technicalComponents = resolvedFactors?.technical?.components as { volume_z?: unknown } | undefined;
   const volumeZ = safeNumber(technicalComponents?.volume_z);
 
-  const flowComponents = factors?.flow?.components as FlowComponents | undefined;
+  const flowComponents = resolvedFactors?.flow?.components as FlowComponents | undefined;
   const pcr = safeNumber(flowComponents?.put_call?.put_call_ratio);
   const institutionalTrend = flowComponents?.institutional_trend;
   const instCount = safeNumber(flowComponents?.institutional_count ?? institutionalTrend?.latest_holder_count);
@@ -211,15 +245,19 @@ export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCa
 
   const flowLinePrimary = `${describeVolume(volumeZ)} · ${describePcr(pcr)}`;
   const flowLineSecondary = instCount !== null ? `机构持仓记录数：${instCount}` : '机构持仓等待更新';
-  const flowLines = [flowLinePrimary, flowLineSecondary, `${trendSummary.text} · ${sourceSummary}`];
+  const flowRichLines: SnapshotRichLine[] = [
+    { label: '机构持仓', value: flowLineSecondary },
+    { label: '机构行为', value: trendSummary.text, highlight: trendSummary.tone === 'bullish' || trendSummary.tone === 'bearish' },
+    { label: '来源', value: sourceSummary },
+  ];
 
-  const industrySummary = factors?.industry?.summary;
-  const catalystSummary = factors?.catalyst?.summary;
+  const industrySummary = resolvedFactors?.industry?.summary;
+  const catalystSummary = resolvedFactors?.catalyst?.summary;
   const narrativePrimary =
     industrySummary || catalystSummary
       ? [industrySummary, catalystSummary].filter(Boolean).join(' / ')
       : '等待模型生成行业与催化叙事';
-  const narrativeSecondary = actionCard ? `当前决策卡片：${actionCard}` : '运行 AION 引擎后展示决策卡片';
+  const narrativeSecondary = resolvedActionCard ? `当前决策卡片：${resolvedActionCard}` : '运行 AION 引擎后展示决策卡片';
 
   return (
     <Card className="glass-card">
@@ -228,23 +266,31 @@ export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCa
           <CardTitle>市场快照</CardTitle>
           <CardDescription>基础行情 · 波动率 · 资金与成交 · 行业与叙事</CardDescription>
         </div>
-        <Badge variant="outline">Ticker · {ticker}</Badge>
+        <Badge variant="outline">Ticker · {resolvedTicker}</Badge>
       </CardHeader>
       <CardContent>
         <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-          <SnapshotItem title="基础行情" badge="价格" emoji="📌" lines={[priceLine]} />
+          <SnapshotItem title="基础行情" badge="价格" emoji="📌" lines={[formatPrice(liveQuote ?? derivedLiveQuote)]} />
           <SnapshotItem
             title="波动率"
             badge="IV vs HV 差值"
             emoji="🔄"
-            lines={[volDesc.text, volRangeLine ?? '基于 AION Volatility 因子 (IV-HV)']}
+            lines={[volDesc.text]}
+            richLines={[
+              {
+                label: '波动区间',
+                value: volRangeLine ?? '等待波动区间数据',
+                highlight: Boolean(volRangeLine),
+              },
+            ]}
             tone={volDesc.tone}
           />
           <SnapshotItem
             title="资金与成交"
             badge="成交与期权情绪"
             emoji="🔍"
-            lines={flowLines}
+            lines={[flowLinePrimary]}
+            richLines={flowRichLines}
             tone={trendSummary.tone}
           />
           <SnapshotItem

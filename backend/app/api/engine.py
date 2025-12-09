@@ -130,6 +130,12 @@ async def run_calculation_in_background(
                 factors=factors_payload,
                 weight_denominator=result_data["weight_denominator"],
                 calculated_at=result_data["calculated_at"],
+                scenarios=result_data.get("scenarios"),
+                key_variables=result_data.get("key_variables"),
+                stock_strategy=result_data.get("stock_strategy"),
+                option_strategies=result_data.get("option_strategies"),
+                risk_management=result_data.get("risk_management"),
+                execution_notes=result_data.get("execution_notes"),
             )
 
             db.add(score_entry)

@@ -16,4 +16,10 @@ def serialize_analysis_score(score: AnalysisScore) -> Dict[str, Any]:
         "weight_denominator": score.weight_denominator,
         "calculated_at": score.calculated_at.isoformat() if score.calculated_at else None,
         "created_at": score.created_at.isoformat() if score.created_at else None,
+        "scenarios": score.scenarios,
+        "key_variables": score.key_variables,
+        "stock_strategy": score.stock_strategy,
+        "option_strategies": score.option_strategies,
+        "risk_management": score.risk_management,
+        "execution_notes": score.execution_notes,
     }

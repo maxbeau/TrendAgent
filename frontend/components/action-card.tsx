@@ -6,11 +6,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { safeNumber } from '@/lib/numbers';
 import { pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import { cn } from '@/lib/utils';
+import { useAionStore } from '@/store/aion-store';
 import type { AionAnalysisResult } from '@/types/aion';
 
 interface ActionCardProps {
   result?: AionAnalysisResult;
-  fallbackTicker: string;
   isCalculating: boolean;
   isLoading?: boolean;
 }
@@ -45,15 +45,17 @@ function sizingHint(plan?: AionAnalysisResult['action_plan']) {
   return 'Standard Size';
 }
 
-export function ActionCard({ result, fallbackTicker, isCalculating, isLoading }: ActionCardProps) {
-  const hasResult = Boolean(result);
+export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps) {
+  const storeResult = useAionStore((state) => state.analysis);
+  const resolvedResult = result ?? storeResult;
+  const hasResult = Boolean(resolvedResult);
   const showSkeleton = (isLoading || isCalculating) && !hasResult;
   const showPlaceholder = !showSkeleton && !hasResult;
-  const totalScoreRaw = result?.total_score ?? 0;
+  const totalScoreRaw = resolvedResult?.total_score ?? 0;
   const totalScorePct = Math.min(Math.max(totalScoreRaw, 0), 5) * 20; // 转换为百分制
-  const signal = result?.signal ?? 'WAIT';
-  const actionLabel = result?.action_card ?? 'Pending Signal';
-  const volComponents = result?.factors?.volatility?.components as { expected_move?: RawExpectedMove } | undefined;
+  const signal = resolvedResult?.signal ?? 'WAIT';
+  const actionLabel = resolvedResult?.action_card ?? 'Pending Signal';
+  const volComponents = resolvedResult?.factors?.volatility?.components as { expected_move?: RawExpectedMove } | undefined;
   const expectedMove = pickExpectedMove(volComponents?.expected_move);
   const derivedPlan = (() => {
     if (!expectedMove) return undefined;
@@ -61,6 +63,7 @@ export function ActionCard({ result, fallbackTicker, isCalculating, isLoading }:
     if (upper === null && lower === null && spot === null) return undefined;
     const target_price = upper ?? (spot !== null ? spot * 1.05 : null);
     const stop_loss = lower ?? (spot !== null ? spot * 0.97 : null);
+    if (target_price === null || stop_loss === null) return undefined;
     const suggested_strategy =
       signal === 'STRONG_BUY' || signal === 'BUY'
         ? '买入正股或买入看涨期权'
@@ -69,11 +72,11 @@ export function ActionCard({ result, fallbackTicker, isCalculating, isLoading }:
           : signal === 'SELL'
             ? '逢高减仓或卖出认购'
             : '考虑做空或买入保护性看跌';
-    const risk_sizing =
+    const risk_sizing: "Standard" | "Half" | "Quarter" =
       signal === 'STRONG_BUY' || signal === 'BUY' ? 'Standard' : signal === 'WAIT' ? 'Half' : 'Quarter';
     return { target_price, stop_loss, suggested_strategy, risk_sizing };
   })();
-  const actionPlan = result?.action_plan ?? derivedPlan;
+  const actionPlan = resolvedResult?.action_plan ?? derivedPlan;
   const formatPrice = (value?: number | null) => {
     const num = safeNumber(value);
     if (num === null || num <= 0) return '待生成';

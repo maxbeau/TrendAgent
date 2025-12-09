@@ -25,7 +25,7 @@ export function useAionEngine(): UseAionEngineState {
 
   const calculateMutation = useMutation({
     mutationFn: (input: CalculatePayload) => triggerAionCalculation(input),
-    onSuccess: (data) => setTaskId(data.task_id),
+    onSuccess: (data) => setTaskId(data.task_id ?? null),
     onError: () => setTaskId(null),
   });
 

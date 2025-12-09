@@ -1,5 +1,6 @@
 'use client';
-import { useMemo, useState } from 'react';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
@@ -13,20 +14,23 @@ import {
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ActionCard } from '@/components/action-card';
+import { TrendScenario } from '@/components/aion/trend-scenario';
+import { KeyVariableTable } from '@/components/aion/key-variables';
+import { StrategyMatrix } from '@/components/aion/strategy-matrix';
 import { AionRadar } from '@/components/charts/aion-radar';
 import { StructureChart } from '@/components/charts/structure-chart';
 import { FactorGrid } from '@/components/factor-grid';
+import { MarketSnapshot } from '@/components/market-snapshot';
 import { useAionEngine } from '@/hooks/use-aion-engine';
-import { normalizeAionResult } from '@/lib/aion-normalizer';
+import { useLiveQuote } from '@/hooks/use-live-quote';
 import { factorLabels } from '@/lib/factor-labels';
 import { safeNumber } from '@/lib/numbers';
-import { fetchDashboardSummary } from '@/lib/requests/dashboard';
+import { fetchFullReport } from '@/lib/requests/report';
 import { cn } from '@/lib/utils';
-import { fetchOhlc } from '@/lib/requests/market';
-import { fetchFactorMeta } from '@/lib/requests/factor-meta';
 import { describeIvHvDelta, formatExpectedMoveRange, ivHvBadgeLabel as buildIvHvBadgeLabel, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import type { FactorKey } from '@/types/aion';
 import { RefreshCcw } from 'lucide-react';
+import { useAionStore } from '@/store/aion-store';
 
 const prettyKey = (key: string) => key.replace(/^.+?\./, '').replace(/_/g, ' ').toUpperCase();
 
@@ -40,6 +44,13 @@ type NormalizedEventComponent = {
 
 export default function DashboardPage() {
   const searchParams = useSearchParams();
+  const urlTicker = searchParams?.get('ticker')?.toUpperCase() ?? 'NVDA';
+  const analysis = useAionStore((state) => state.analysis);
+  const ohlc = useAionStore((state) => state.ohlc);
+  const factorMeta = useAionStore((state) => state.factorMeta);
+  const hydrate = useAionStore((state) => state.hydrate);
+  const setAnalysis = useAionStore((state) => state.setAnalysis);
+  const ticker = analysis?.ticker || urlTicker;
   const [factorDialog, setFactorDialog] = useState<{
     key: FactorKey;
     summary?: string;
@@ -47,49 +58,41 @@ export default function DashboardPage() {
     sources?: Array<{ title?: string; url?: string; source?: string }>;
     components?: Record<string, unknown>;
   } | null>(null);
-  const ticker = searchParams?.get('ticker')?.toUpperCase() ?? 'NVDA';
+  const lastRefreshTime = useRef<number>(0);
+
+  const {
+    data: reportData,
+    isLoading: reportLoading,
+    isFetching: reportFetching,
+    isError: reportError,
+    error: reportErrorObj,
+    refetch: refetchReport,
+  } = useQuery({
+    queryKey: ['full-report', urlTicker],
+    queryFn: () => fetchFullReport(urlTicker),
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (reportData) hydrate(reportData);
+  }, [reportData, hydrate]);
+  const reportErrorMessage = reportError
+    ? ((reportErrorObj as Error | undefined)?.message ?? '无法加载仪表盘报告')
+    : null;
+
   const { start, result, isCalculating } = useAionEngine();
-  const {
-    data: summaryData,
-    isLoading: summaryLoading,
-    isError: summaryError,
-    error: summaryErrorObj,
-    isFetching: summaryFetching,
-    refetch: refetchSummary,
-  } = useQuery({
-    queryKey: ['dashboard-summary'],
-    queryFn: fetchDashboardSummary,
-    staleTime: 60_000,
-  });
-  const {
-    data: factorMeta,
-    isLoading: metaLoading,
-    isError: metaError,
-    error: metaErrorObj,
-  } = useQuery({
-    queryKey: ['factor-meta'],
-    queryFn: fetchFactorMeta,
-    staleTime: 300_000,
-  });
-  const {
-    data: ohlcData,
-    isLoading: ohlcLoading,
-    isError: ohlcError,
-    error: ohlcErrorObj,
-    isFetching: ohlcFetching,
-    refetch: refetchOhlc,
-  } = useQuery({
-    queryKey: ['ohlc', ticker],
-    queryFn: () => fetchOhlc(ticker),
-    staleTime: 60_000,
-    retry: 1,
-  });
-  const summaryResult = useMemo(() => {
-    const scores = summaryData?.latest_scores ?? [];
-    const matched = scores.find((entry) => entry.ticker?.toUpperCase() === ticker);
-    return matched ? normalizeAionResult(matched) : undefined;
-  }, [summaryData?.latest_scores, ticker]);
-  const displayResult = result ?? summaryResult;
+  // 引擎结果同步 - 直接调用
+  useEffect(() => {
+    if (result) {
+      setAnalysis(result);
+    }
+  }, [result, setAnalysis]);
+
+  const liveQuote = useLiveQuote();
+  const priceTone =
+    liveQuote && liveQuote.change !== 0 ? (liveQuote.change > 0 ? 'text-bullish' : 'text-bearish') : 'text-slate-300';
+  const pctLabel =
+    liveQuote && Number.isFinite(liveQuote.pct) ? `${liveQuote.pct >= 0 ? '+' : ''}${liveQuote.pct.toFixed(2)}%` : '—';
+
   const formulaMap = useMemo(() => {
     const map: Partial<Record<FactorKey, string>> = {};
     factorMeta?.factors?.forEach((item) => {
@@ -98,41 +101,39 @@ export default function DashboardPage() {
     });
     return map;
   }, [factorMeta?.factors]);
-  const modelLabel = displayResult?.model_version ?? 'AION';
-  const radarData = useMemo(
-    () =>
-      displayResult?.factors
-        ? (Object.entries(displayResult.factors) as [FactorKey, { score: number }][]).map(([key, factor]) => ({
-            factor: factorLabels[key],
-            score: factor.score ?? 0,
-          }))
-        : [],
-    [displayResult?.factors],
-  );
+
+  // factorLabels 现在是静态的，无需额外处理
+
+  const modelLabel = analysis?.model_version ?? 'AION';
+  const radarData = useMemo(() => {
+    if (!analysis?.factors) return [];
+    
+    const entries = (Object.entries(analysis.factors) as [FactorKey, { score: number }][]).map(([key, factor]) => ({
+      factor: factorLabels[key],
+      score: factor.score ?? 0,
+    }));
+    
+    return entries;
+  }, [analysis?.factors]);
   const structureData = useMemo(
     () => ({
-      candles: ohlcData?.candles ?? [],
-      ma20: ohlcData?.ma20 ?? [],
-      ma50: ohlcData?.ma50 ?? [],
-      ma200: ohlcData?.ma200 ?? [],
-      bands: ohlcData?.bands ?? [],
+      candles: ohlc?.candles ?? [],
+      ma20: ohlc?.ma20 ?? [],
+      ma50: ohlc?.ma50 ?? [],
+      ma200: ohlc?.ma200 ?? [],
+      bands: ohlc?.bands ?? [],
     }),
-    [ohlcData],
+    [ohlc],
   );
-  const ohlcErrorMessage = ohlcError ? (ohlcErrorObj as Error | undefined)?.message ?? '无法加载行情数据' : null;
-  const summaryErrorMessage = summaryError
-    ? (summaryErrorObj as Error | undefined)?.message ?? '无法加载最新评分数据'
-    : null;
-  const metaErrorMessage = metaError ? (metaErrorObj as Error | undefined)?.message ?? '无法加载因子元数据' : null;
+
   const lastSyncedValue = useMemo(() => {
-    const raw = displayResult?.calculated_at;
+    const raw = analysis?.calculated_at;
     if (!raw) return '—';
     const normalizedRaw = /([zZ]|[+-]\d\d:\d\d)$/.test(raw) ? raw : `${raw}Z`;
     const dt = new Date(normalizedRaw);
     if (Number.isNaN(dt.getTime())) return '—';
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    // Format timestamp in the viewer's timezone but keep origin normalized to UTC
-    const formatted = dt.toLocaleString(undefined, {
+    return dt.toLocaleString(undefined, {
       timeZone: tz,
       timeZoneName: 'short',
       year: 'numeric',
@@ -143,15 +144,61 @@ export default function DashboardPage() {
       second: '2-digit',
       hour12: false,
     });
-    return formatted;
-  }, [displayResult?.calculated_at]);
-  const isRefreshing = isCalculating || summaryFetching || ohlcFetching;
-  const handleRefresh = () => {
+  }, [analysis?.calculated_at]);
+
+  const ivHvDelta = useMemo(() => {
+    const components = analysis?.factors?.volatility?.components as { iv_vs_hv?: unknown } | undefined;
+    return safeNumber(components?.iv_vs_hv);
+  }, [analysis?.factors?.volatility?.components]);
+  const expectedMove = useMemo(() => {
+    const components = analysis?.factors?.volatility?.components as { expected_move?: RawExpectedMove } | undefined;
+    return pickExpectedMove(components?.expected_move);
+  }, [analysis?.factors?.volatility?.components]);
+  const ivHvBadgeText = useMemo(() => buildIvHvBadgeLabel(ivHvDelta), [ivHvDelta]);
+  const expectedRangeText = useMemo(() => formatExpectedMoveRange(expectedMove), [expectedMove]);
+
+  const volumeZ = useMemo(() => {
+    const components = analysis?.factors?.technical?.components as { volume_z?: unknown } | undefined;
+    return safeNumber(components?.volume_z);
+  }, [analysis?.factors?.technical?.components]);
+  const putCall = useMemo(() => {
+    const components = analysis?.factors?.flow?.components as { put_call?: { put_call_ratio?: unknown } } | undefined;
+    return safeNumber(components?.put_call?.put_call_ratio);
+  }, [analysis?.factors?.flow?.components]);
+  const narrativeText = useMemo(() => {
+    const catalyst = analysis?.factors?.catalyst?.summary;
+    const industry = analysis?.factors?.industry?.summary;
+    const candidate = catalyst || industry || '';
+    if (!candidate || candidate.includes('等待模型结果')) return '等待模型生成行业/催化叙事';
+    return candidate.replace(/^Score\s*[:]*\s*[0-9.]+\s*(?:·|:)?\s*/i, '').trim();
+  }, [analysis?.factors?.catalyst?.summary, analysis?.factors?.industry?.summary]);
+  const volSnapshot = useMemo(() => {
+    const desc = describeIvHvDelta(ivHvDelta);
+    const base = `Vol: ${desc.text}`;
+    return expectedRangeText ? `${base} · ${expectedRangeText}` : base;
+  }, [ivHvDelta, expectedRangeText]);
+  const flowSnapshot = useMemo(() => {
+    const volumePart =
+      volumeZ === null ? '成交量等待更新' : volumeZ >= 1.5 ? '成交量高位' : volumeZ >= 0.5 ? '成交量略高' : volumeZ <= -0.8 ? '成交量偏低' : '成交量中性';
+    const pcrPart =
+      putCall === null ? 'Put/Call 等待更新' : putCall > 1.2 ? 'Put/Call 偏高（防守）' : putCall < 0.8 ? 'Put/Call 偏低（看涨）' : 'Put/Call 中性';
+    return `Flow: ${volumePart} · ${pcrPart}`;
+  }, [volumeZ, putCall]);
+
+  const formulaLoading = reportLoading && !factorMeta;
+  const ohlcLoading = reportLoading && !ohlc;
+  const ohlcErrorMessage = reportErrorMessage;
+  const isRefreshing = isCalculating || reportFetching;
+  const handleRefresh = useCallback(() => {
     if (isCalculating) return;
-    refetchSummary();
-    refetchOhlc();
-    start({ ticker });
-  };
+    const now = Date.now();
+    if (lastRefreshTime.current && now - lastRefreshTime.current < 1000) {
+      return;
+    }
+    lastRefreshTime.current = now;
+    refetchReport();
+    start({ ticker: urlTicker });
+  }, [isCalculating, refetchReport, start, urlTicker]);
 
   const renderSummary = (text?: string) => {
     if (!text) return '暂无摘要，可重新运行引擎获取最新结果。';
@@ -168,65 +215,7 @@ export default function DashboardPage() {
       </div>
     );
   };
-  const liveQuote = useMemo(() => {
-    const candles = ohlcData?.candles;
-    if (!candles?.length) return null;
-    const last = candles[candles.length - 1];
-    const prev = candles.length > 1 ? candles[candles.length - 2] : null;
-    const close = Number(last.close);
-    const prevClose = prev ? Number(prev.close) : null;
-    if (!Number.isFinite(close)) return null;
-    const change = prevClose ? close - prevClose : 0;
-    const pct = prevClose ? (change / prevClose) * 100 : 0;
-    const dateLabel =
-      typeof last.time === 'string'
-        ? last.time
-        : typeof last.time === 'number'
-          ? new Date(last.time * 1000).toISOString().split('T')[0]
-          : '';
-    return { close, change, pct, dateLabel };
-  }, [ohlcData?.candles]);
-  const priceTone =
-    liveQuote && liveQuote.change !== 0 ? (liveQuote.change > 0 ? 'text-bullish' : 'text-bearish') : 'text-slate-300';
-  const pctLabel =
-    liveQuote && Number.isFinite(liveQuote.pct) ? `${liveQuote.pct >= 0 ? '+' : ''}${liveQuote.pct.toFixed(2)}%` : '—';
-  const ivHvDelta = useMemo(() => {
-    const components = displayResult?.factors?.volatility?.components as { iv_vs_hv?: unknown } | undefined;
-    return safeNumber(components?.iv_vs_hv);
-  }, [displayResult?.factors?.volatility?.components]);
-  const expectedMove = useMemo(() => {
-    const components = displayResult?.factors?.volatility?.components as { expected_move?: RawExpectedMove } | undefined;
-    return pickExpectedMove(components?.expected_move);
-  }, [displayResult?.factors?.volatility?.components]);
-  const ivHvBadgeText = useMemo(() => buildIvHvBadgeLabel(ivHvDelta), [ivHvDelta]);
-  const expectedRangeText = useMemo(() => formatExpectedMoveRange(expectedMove), [expectedMove]);
-  const volumeZ = useMemo(() => {
-    const components = displayResult?.factors?.technical?.components as { volume_z?: unknown } | undefined;
-    return safeNumber(components?.volume_z);
-  }, [displayResult?.factors?.technical?.components]);
-  const putCall = useMemo(() => {
-    const components = displayResult?.factors?.flow?.components as { put_call?: { put_call_ratio?: unknown } } | undefined;
-    return safeNumber(components?.put_call?.put_call_ratio);
-  }, [displayResult?.factors?.flow?.components]);
-  const narrativeText = useMemo(() => {
-    const catalyst = displayResult?.factors?.catalyst?.summary;
-    const industry = displayResult?.factors?.industry?.summary;
-    const candidate = catalyst || industry || '';
-    if (!candidate || candidate.includes('等待模型结果')) return '等待模型生成行业/催化叙事';
-    return candidate.replace(/^Score\s*[:]*\s*[0-9.]+\s*(?:·|:)?\s*/i, '').trim();
-  }, [displayResult?.factors?.catalyst?.summary, displayResult?.factors?.industry?.summary]);
-  const volSnapshot = useMemo(() => {
-    const desc = describeIvHvDelta(ivHvDelta);
-    const base = `Vol: ${desc.text}`;
-    return expectedRangeText ? `${base} · ${expectedRangeText}` : base;
-  }, [ivHvDelta, expectedRangeText]);
-  const flowSnapshot = useMemo(() => {
-    const volumePart =
-      volumeZ === null ? '成交量等待更新' : volumeZ >= 1.5 ? '成交量高位' : volumeZ >= 0.5 ? '成交量略高' : volumeZ <= -0.8 ? '成交量偏低' : '成交量中性';
-    const pcrPart =
-      putCall === null ? 'Put/Call 等待更新' : putCall > 1.2 ? 'Put/Call 偏高（防守）' : putCall < 0.8 ? 'Put/Call 偏低（看涨）' : 'Put/Call 中性';
-    return `Flow: ${volumePart} · ${pcrPart}`;
-  }, [volumeZ, putCall]);
+
   const factorComponents = factorDialog?.components as Record<string, any> | undefined;
   const isCatalystDialog = factorDialog?.key === 'catalyst';
   const toNum = (val: unknown) => {
@@ -339,7 +328,6 @@ export default function DashboardPage() {
       }
       if (typeof val === 'string') return val;
       if (typeof val === 'object' && val !== null) {
-        // 优先对常见结构化字段做扁平化
         if ('lower' in val && 'upper' in val) {
           const l = Number((val as any).lower);
           const u = Number((val as any).upper);
@@ -390,6 +378,7 @@ export default function DashboardPage() {
             <p className="text-sm text-slate-500">
               {volSnapshot} · {flowSnapshot} · {narrativeText}
             </p>
+            {reportErrorMessage ? <p className="text-xs text-warning">{reportErrorMessage}</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
@@ -419,12 +408,7 @@ export default function DashboardPage() {
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-          <ActionCard
-            result={displayResult}
-            fallbackTicker={ticker}
-            isCalculating={isCalculating}
-            isLoading={(summaryLoading || summaryFetching) && !displayResult}
-          />
+          <ActionCard isCalculating={isCalculating} isLoading={reportLoading && !analysis} />
 
           <Card>
             <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -434,11 +418,11 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {summaryLoading || summaryFetching ? (
+              {reportLoading && !radarData.length ? (
                 <Skeleton className="h-[320px] w-full rounded-xl" />
-              ) : summaryErrorMessage ? (
+              ) : reportErrorMessage ? (
                 <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-amber-100">
-                  {summaryErrorMessage}
+                  {reportErrorMessage}
                 </div>
               ) : radarData.length ? (
                 <AionRadar data={radarData} />
@@ -454,12 +438,11 @@ export default function DashboardPage() {
             <div>
               <h2 className="text-xl font-semibold">因子证据网格</h2>
               <p className="text-sm text-slate-400">八大因子状态灯 + 摘要</p>
-              {metaErrorMessage ? <p className="text-xs text-warning">{metaErrorMessage}</p> : null}
+              {reportErrorMessage ? <p className="text-xs text-warning">{reportErrorMessage}</p> : null}
             </div>
             <Badge variant="outline">AION Factors</Badge>
           </div>
           <FactorGrid
-            result={displayResult}
             onSelect={(key, data) =>
               setFactorDialog({
                 key,
@@ -470,27 +453,17 @@ export default function DashboardPage() {
               })
             }
             formulas={formulaMap}
-            metaLoading={metaLoading}
+            metaLoading={formulaLoading}
           />
         </section>
 
         <section className="grid gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>智能研报</CardTitle>
-              <CardDescription>Scenario Analysis · Bull / Base / Bear</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-slate-200">
-              <div className="rounded-lg border border-white/10 bg-white/5 p-4 text-slate-300">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">状态</p>
-                <p className="mt-2">尚未接入智能研报数据源，等待后端接口对接后展示 Bull / Base / Bear 场景。</p>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-white/5 p-4 text-slate-300">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">提示</p>
-                <p className="mt-2">可点击右上角运行 AION 引擎，生成基础因子评分；研报内容将在后续版本补充。</p>
-              </div>
-            </CardContent>
-          </Card>
+          <TrendScenario />
+          <KeyVariableTable />
+        </section>
+
+        <section className="grid gap-6">
+          <StrategyMatrix />
         </section>
 
         <section className="grid gap-6">
@@ -502,9 +475,9 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {ohlcLoading || ohlcFetching ? (
+              {ohlcLoading ? (
                 <Skeleton className="h-[320px] w-full rounded-xl" />
-              ) : ohlcError ? (
+              ) : ohlcErrorMessage ? (
                 <div className="rounded-lg border border-bearish/30 bg-bearish/10 p-3 text-sm text-bearish">
                   {ohlcErrorMessage}
                 </div>
@@ -517,6 +490,18 @@ export default function DashboardPage() {
                   bands={structureData.bands}
                 />
               )}
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <Card>
+            <CardHeader>
+              <CardTitle>市场快照</CardTitle>
+              <CardDescription>基础行情 · 波动率 · 资金与成交 · 行业与叙事</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <MarketSnapshot ticker={ticker} />
             </CardContent>
           </Card>
         </section>

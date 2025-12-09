@@ -125,5 +125,11 @@ export function normalizeAionResult(data: EngineScoreApi): AionAnalysisResult {
     signal: actionCardToSignal(data.action_card ?? '', data.total_score),
     action_card: data.action_card,
     factors,
+    scenarios: data.scenarios,
+    key_variables: data.key_variables,
+    stock_strategy: data.stock_strategy,
+    option_strategies: data.option_strategies,
+    risk_management: data.risk_management,
+    execution_notes: data.execution_notes,
   };
 }

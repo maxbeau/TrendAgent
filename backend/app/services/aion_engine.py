@@ -15,6 +15,7 @@ from app.models import (
     SystemFactor,
 )
 from app.services.factors import compute_all_factors
+from app.services.insights_builder import build_advanced_insights
 
 
 def _action_card(score: Optional[float]) -> str:
@@ -141,6 +142,13 @@ async def calculate(
     aggregated = _aggregate_scores(factors, category_weights)
     card = _action_card(aggregated["total_score"])
 
+    insights = await build_advanced_insights(
+        ticker,
+        total_score=aggregated["total_score"],
+        action_card=card,
+        factors=aggregated["factor_output"],
+    )
+
     return {
         "ticker": ticker,
         "model_version": model_version,
@@ -149,4 +157,5 @@ async def calculate(
         "calculated_at": datetime.utcnow(),
         "factors": aggregated["factor_output"],
         "weight_denominator": aggregated["weight_denominator"],
+        **insights,
     }

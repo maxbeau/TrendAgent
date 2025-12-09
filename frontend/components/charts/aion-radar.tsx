@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -19,7 +20,7 @@ interface AionRadarProps {
   data: RadarPoint[];
 }
 
-export function AionRadar({ data }: AionRadarProps) {
+export const AionRadar = React.memo(({ data }: AionRadarProps) => {
   return (
     <ResponsiveContainer width="100%" height={320}>
       <RadarChart data={data} outerRadius="75%">
@@ -43,4 +44,19 @@ export function AionRadar({ data }: AionRadarProps) {
       </RadarChart>
     </ResponsiveContainer>
   );
-}
+}, (prevProps, nextProps) => {
+  // 手动比较 data 数组的内容，而不是引用
+  if (prevProps.data.length !== nextProps.data.length) return false;
+  
+  for (let i = 0; i < prevProps.data.length; i++) {
+    const prevItem = prevProps.data[i];
+    const nextItem = nextProps.data[i];
+    
+    if (prevItem.factor !== nextItem.factor ||
+        prevItem.score !== nextItem.score) {
+      return false;
+    }
+  }
+  
+  return true;
+});
