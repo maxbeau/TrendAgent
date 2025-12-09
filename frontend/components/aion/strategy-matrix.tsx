@@ -1,5 +1,8 @@
+import { useMemo } from 'react';
+
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useLiveQuote } from '@/hooks/use-live-quote';
 import { useAionStore } from '@/store/aion-store';
 import type {
   ExecutionNotes,
@@ -10,6 +13,50 @@ import type {
 } from '@/types/aion';
 
 const formatLeg = (leg: StrategyLeg) => `${leg.action === 'buy' ? '买入' : '卖出'} ${leg.strike} ${leg.type.toUpperCase()}`;
+
+const extractPrice = (raw?: string | number | null) => {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw !== 'string') return null;
+  const match = raw.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+};
+
+const parseEntryZone = (zone?: string) => {
+  if (!zone || typeof zone !== 'string') return null;
+  const parts = zone.split(/[–—-]/).map((part) => extractPrice(part.trim()));
+  if (parts.length === 1) return { lower: parts[0], upper: parts[0] };
+  const [lower, upper] = parts;
+  return { lower: lower ?? null, upper: upper ?? null };
+};
+
+const distanceToneClass: Record<'in' | 'below' | 'above' | 'unknown', string> = {
+  in: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100',
+  below: 'border-amber-300/40 bg-amber-500/10 text-amber-50',
+  above: 'border-rose-300/40 bg-rose-500/10 text-rose-50',
+  unknown: 'border-white/10 bg-white/5 text-slate-200',
+};
+
+const buildEntryDistance = (price: number | null, zone?: string) => {
+  if (!Number.isFinite(price)) return null;
+  const parsed = parseEntryZone(zone);
+  if (!parsed || (parsed.lower === null && parsed.upper === null)) return null;
+  const { lower, upper } = parsed;
+
+  if (lower !== null && price < lower) {
+    const pct = ((lower - price) / lower) * 100;
+    return { label: `距离买点还有 ${pct.toFixed(1)}%`, tone: 'below' as const };
+  }
+  if (upper !== null && price > upper) {
+    const pct = ((price - upper) / upper) * 100;
+    return { label: `已偏离入场区 ${pct.toFixed(1)}%`, tone: 'above' as const };
+  }
+  if (lower !== null || upper !== null) {
+    return { label: '价格在入场区附近，关注执行节奏', tone: 'in' as const };
+  }
+  return { label: '等待入场区或行情数据更新', tone: 'unknown' as const };
+};
 
 export function StrategyMatrix({
   stockStrategy,
@@ -28,6 +75,11 @@ export function StrategyMatrix({
   const risk = riskManagement ?? analysis?.risk_management;
   const execNotes = executionNotes ?? analysis?.execution_notes;
   const hasData = stock || options.length || risk || execNotes;
+  const liveQuote = useLiveQuote();
+  const entryDistance = useMemo(
+    () => buildEntryDistance(liveQuote?.close ?? null, stock?.entry_zone),
+    [liveQuote?.close, stock?.entry_zone],
+  );
 
   return (
     <Card className="glass-card">
@@ -54,6 +106,14 @@ export function StrategyMatrix({
                       <p className="text-xs text-slate-500">入场区间</p>
                       <p className="font-mono text-lg text-slate-100">{stock.entry_zone}</p>
                     </div>
+                    {entryDistance ? (
+                      <div
+                        className={`rounded-lg border px-3 py-2 text-xs ${distanceToneClass[entryDistance.tone] ?? distanceToneClass.unknown}`}
+                      >
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-white/70">价格锚点</p>
+                        <p className="mt-1 font-mono text-sm">{entryDistance.label}</p>
+                      </div>
+                    ) : null}
                     {stock.add_conditions?.length ? (
                       <div>
                         <p className="text-xs text-slate-500">加仓条件</p>

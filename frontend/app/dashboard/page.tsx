@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AxiosError } from 'axios';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -28,11 +29,23 @@ import { safeNumber } from '@/lib/numbers';
 import { fetchFullReport } from '@/lib/requests/report';
 import { cn } from '@/lib/utils';
 import { describeIvHvDelta, formatExpectedMoveRange, ivHvBadgeLabel as buildIvHvBadgeLabel, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
-import type { FactorKey } from '@/types/aion';
+import type { AionAnalysisResult, FactorKey } from '@/types/aion';
 import { RefreshCcw } from 'lucide-react';
 import { useAionStore } from '@/store/aion-store';
 
 const prettyKey = (key: string) => key.replace(/^.+?\./, '').replace(/_/g, ' ').toUpperCase();
+const CACHE_TTL_MINUTES = 60;
+const CACHE_TTL_MS = CACHE_TTL_MINUTES * 60 * 1000;
+const isFresh = (analysis?: AionAnalysisResult) => {
+  if (!analysis?.calculated_at) return false;
+  const normalized = /([zZ]|[+-]\d\d:\d\d)$/.test(analysis.calculated_at)
+    ? analysis.calculated_at
+    : `${analysis.calculated_at}Z`;
+  const ts = Date.parse(normalized);
+  if (!Number.isFinite(ts)) return false;
+  const ageMs = Date.now() - ts;
+  return ageMs < CACHE_TTL_MINUTES * 60 * 1000;
+};
 
 type NormalizedEventComponent = {
   label?: string;
@@ -44,13 +57,16 @@ type NormalizedEventComponent = {
 
 export default function DashboardPage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const urlTicker = searchParams?.get('ticker')?.toUpperCase() ?? 'NVDA';
   const analysis = useAionStore((state) => state.analysis);
   const ohlc = useAionStore((state) => state.ohlc);
   const factorMeta = useAionStore((state) => state.factorMeta);
   const hydrate = useAionStore((state) => state.hydrate);
   const setAnalysis = useAionStore((state) => state.setAnalysis);
+  const clear = useAionStore((state) => state.clear);
   const ticker = analysis?.ticker || urlTicker;
+  const [tickerInput, setTickerInput] = useState(urlTicker);
   const [factorDialog, setFactorDialog] = useState<{
     key: FactorKey;
     summary?: string;
@@ -59,6 +75,7 @@ export default function DashboardPage() {
     components?: Record<string, unknown>;
   } | null>(null);
   const lastRefreshTime = useRef<number>(0);
+  const autoStartRef = useRef<Record<string, number>>({});
 
   const {
     data: reportData,
@@ -78,14 +95,55 @@ export default function DashboardPage() {
   const reportErrorMessage = reportError
     ? ((reportErrorObj as Error | undefined)?.message ?? '无法加载仪表盘报告')
     : null;
+  const currentAnalysis = useMemo(
+    () => (analysis?.ticker?.toUpperCase() === urlTicker ? analysis : undefined),
+    [analysis, urlTicker],
+  );
+  const hasFreshCache = useMemo(() => isFresh(currentAnalysis), [currentAnalysis]);
 
-  const { start, result, isCalculating } = useAionEngine();
+  useEffect(() => {
+    setTickerInput(urlTicker);
+    clear();
+    delete autoStartRef.current[urlTicker];
+  }, [urlTicker, clear]);
+
+  const handleTickerSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const normalized = tickerInput.trim().toUpperCase().replace(/\s+/g, '');
+      if (!normalized || normalized === urlTicker) return;
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('ticker', normalized);
+      router.push(`/dashboard?${params.toString()}`);
+    },
+    [router, searchParams, tickerInput, urlTicker],
+  );
+
+  const { start, result, isCalculating, isSuccess } = useAionEngine();
+  const reportStatus = (reportErrorObj as AxiosError | undefined)?.response?.status;
+  useEffect(() => {
+    const lastAutoStart = autoStartRef.current[urlTicker];
+    const reportNotFound = reportStatus === 404;
+    const missingOrStale = !hasFreshCache;
+    const shouldStart = !reportLoading && !isCalculating && missingOrStale && (reportNotFound || !currentAnalysis);
+    const cooldownPassed = !lastAutoStart || Date.now() - lastAutoStart > CACHE_TTL_MS;
+    if (shouldStart && cooldownPassed) {
+      autoStartRef.current[urlTicker] = Date.now();
+      start({ ticker: urlTicker });
+    }
+  }, [currentAnalysis, hasFreshCache, isCalculating, reportLoading, reportStatus, start, urlTicker]);
   // 引擎结果同步 - 直接调用
   useEffect(() => {
     if (result) {
       setAnalysis(result);
     }
   }, [result, setAnalysis]);
+
+  useEffect(() => {
+    if (isSuccess) {
+      refetchReport();
+    }
+  }, [isSuccess, refetchReport]);
 
   const liveQuote = useLiveQuote();
   const priceTone =
@@ -358,6 +416,37 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-obsidian-950 via-obsidian-950 to-obsidian-900">
+      <nav className="sticky top-0 z-20 border-b border-white/5 bg-obsidian-950/80 backdrop-blur">
+        <div className="page-shell flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <Badge variant="outline" className="border-violet-400/30 bg-white/5 text-slate-100">
+              TrendAgent
+            </Badge>
+            <span className="text-sm text-slate-400">多 ticker 快速切换</span>
+          </div>
+          <form
+            onSubmit={handleTickerSubmit}
+            className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center md:gap-3"
+          >
+            <div className="flex flex-1 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 md:min-w-[320px]">
+              <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Ticker</span>
+              <input
+                value={tickerInput}
+                onChange={(event) => setTickerInput(event.target.value)}
+                className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none"
+                placeholder="如：NVDA / AAPL / TSLA"
+                aria-label="输入要搜索的 ticker"
+              />
+            </div>
+            <button
+              type="submit"
+              className="inline-flex items-center justify-center rounded-xl bg-violet-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-violet-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300"
+            >
+              搜索
+            </button>
+          </form>
+        </div>
+      </nav>
       <div className="page-shell space-y-6 py-8">
         <section className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
@@ -452,7 +541,6 @@ export default function DashboardPage() {
                 components: data?.components,
               })
             }
-            formulas={formulaMap}
             metaLoading={formulaLoading}
           />
         </section>

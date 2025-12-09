@@ -45,6 +45,42 @@ function sizingHint(plan?: AionAnalysisResult['action_plan']) {
   return 'Standard Size';
 }
 
+const signalThemes: Record<
+  AionAnalysisResult['signal'],
+  { wrap: string; badge: string; text: string; ring: string }
+> = {
+  STRONG_BUY: {
+    wrap: 'border-emerald-400/40 bg-gradient-to-r from-emerald-500/15 via-emerald-400/10 to-transparent',
+    badge: 'border-emerald-300/60 bg-emerald-500/10 text-emerald-100',
+    text: 'text-emerald-50',
+    ring: 'shadow-[0_0_0_8px_rgba(16,185,129,0.08)]',
+  },
+  BUY: {
+    wrap: 'border-emerald-300/30 bg-gradient-to-r from-emerald-400/10 via-emerald-300/10 to-transparent',
+    badge: 'border-emerald-200/60 bg-emerald-400/10 text-emerald-50',
+    text: 'text-emerald-50',
+    ring: 'shadow-[0_0_0_8px_rgba(74,222,128,0.08)]',
+  },
+  WAIT: {
+    wrap: 'border-amber-200/30 bg-gradient-to-r from-amber-400/10 via-amber-300/10 to-transparent',
+    badge: 'border-amber-200/60 bg-amber-500/10 text-amber-50',
+    text: 'text-amber-50',
+    ring: 'shadow-[0_0_0_8px_rgba(251,191,36,0.08)]',
+  },
+  SELL: {
+    wrap: 'border-rose-300/30 bg-gradient-to-r from-rose-500/15 via-rose-400/10 to-transparent',
+    badge: 'border-rose-200/60 bg-rose-500/10 text-rose-50',
+    text: 'text-rose-50',
+    ring: 'shadow-[0_0_0_8px_rgba(251,113,133,0.08)]',
+  },
+  SHORT: {
+    wrap: 'border-rose-400/40 bg-gradient-to-r from-rose-500/15 via-rose-500/10 to-transparent',
+    badge: 'border-rose-300/60 bg-rose-600/10 text-rose-50',
+    text: 'text-rose-50',
+    ring: 'shadow-[0_0_0_8px_rgba(248,113,113,0.12)]',
+  },
+};
+
 export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps) {
   const storeResult = useAionStore((state) => state.analysis);
   const resolvedResult = result ?? storeResult;
@@ -102,22 +138,18 @@ export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps
     if (u !== null) return `$${u.toFixed(2)}${suffix ?? ''}`;
     return `$${l!.toFixed(2)}${suffix ?? ''}`;
   };
+  const signalTheme = signalThemes[signal] ?? signalThemes.WAIT;
 
   return (
     <Card>
       <CardHeader className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <CardTitle>核心行动卡</CardTitle>
-            <CardDescription>模型决策与风险管理摘要</CardDescription>
-          </div>
-          <Badge variant="accent">Signal</Badge>
-        </div>
+        <CardTitle>核心行动卡</CardTitle>
+        <CardDescription>模型决策与风险管理摘要</CardDescription>
         {isCalculating ? <p className="text-xs text-slate-400">Calculating…</p> : null}
       </CardHeader>
-      <CardContent className="grid gap-6 md:grid-cols-2">
+      <CardContent className="space-y-6">
         {showSkeleton ? (
-          <>
+          <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-4">
               <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Total Score</p>
               <Skeleton className="h-12 w-32" />
@@ -137,7 +169,7 @@ export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps
               </div>
               <Skeleton className="h-4 w-2/3" />
             </div>
-          </>
+          </div>
         ) : showPlaceholder ? (
           <div className="md:col-span-2">
             <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-slate-200">
@@ -147,56 +179,79 @@ export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps
           </div>
         ) : (
           <>
-            <div className="space-y-3">
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-[0.22em] text-slate-500">Total Score</p>
-                  <span className="rounded-full border border-bullish/40 bg-bullish/10 px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-bullish">
+            <div
+              className={cn(
+                'relative overflow-hidden rounded-2xl border p-4 shadow-sm',
+                signalTheme.wrap,
+              )}
+            >
+              <div className="absolute -left-8 top-1/2 h-32 w-32 -translate-y-1/2 rounded-full bg-white/5 blur-2xl" />
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-3">
+                  <span className={cn('rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em]', signalTheme.badge)}>
                     {signalLabel(signal)}
                   </span>
+                  <p className="text-sm uppercase tracking-[0.2em] text-white/80">最新模型信号</p>
                 </div>
-                <div className="mt-2 flex items-baseline gap-3">
-                  <div className={cn('relative inline-block pr-14 font-mono text-5xl font-semibold leading-none', scoreTone(totalScorePct))}>
+                <div className="flex items-baseline gap-3">
+                  <div
+                    className={cn(
+                      'relative inline-flex items-baseline gap-2 rounded-lg px-3 py-2 font-mono text-5xl font-semibold leading-none',
+                      scoreTone(totalScorePct),
+                      signalTheme.ring,
+                    )}
+                  >
                     <span>{totalScorePct.toFixed(1)}</span>
-                    <span className="absolute bottom-1 right-3 text-base text-slate-400">/100</span>
+                    <span className="text-base text-white/70">/100</span>
                   </div>
-                  <span className="text-xs uppercase tracking-[0.2em] text-bullish">{actionLabel}</span>
+                  <div className="text-left">
+                    <p className="text-xs uppercase tracking-[0.16em] text-white/70">Confidence</p>
+                    <p className={cn('text-sm font-semibold', signalTheme.text)}>{actionLabel}</p>
+                  </div>
                 </div>
-                <p className="mt-2 text-xs text-slate-400">基于 1-5 分模型换算的百分制，便于快速对比。</p>
               </div>
+              <p className="mt-2 text-xs text-white/70">优先让用户先看到「是什么信号」与「有多大把握」，支持实时刷新。</p>
+            </div>
 
-              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+            <div className="grid gap-4 lg:grid-cols-[1.05fr_1fr]">
+              <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Sizing & Timing</p>
                 <p className="mt-2 text-sm text-amber-100">{sizingHint(actionPlan)}</p>
                 <p className="text-xs text-slate-400">根据波动与信号自动给出仓位提示，后端计划接入实时风险限额。</p>
+                <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-slate-300">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Entry Range</p>
+                  <p className="mt-1 font-mono text-slate-100">
+                    {formatRange(entryRange.lower, entryRange.upper, entryRange.basis ? `（${entryRange.days ?? 30}日基于${entryRange.basis}）` : '')}
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <div className="space-y-4 rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Trade Plan</p>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="space-y-1">
-                  <p className="text-slate-400">Target Price</p>
-                  <p className="font-mono text-bullish text-lg">{formatPrice(actionPlan?.target_price)}</p>
+              <div className="space-y-4 rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Trade Plan</p>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="space-y-1">
+                    <p className="text-slate-400">Target Price</p>
+                    <p className="font-mono text-bullish text-lg">{formatPrice(actionPlan?.target_price)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-slate-400">Stop Loss</p>
+                    <p className="font-mono text-bearish text-lg">{formatPrice(actionPlan?.stop_loss)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-slate-400">Strategy</p>
+                    <p className="font-mono text-slate-100">{actionPlan?.suggested_strategy ?? '待生成'}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-slate-400">Risk Sizing</p>
+                    <p className="font-mono text-amber-100">{actionPlan?.risk_sizing ?? '待生成'}</p>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <p className="text-slate-400">Stop Loss</p>
-                  <p className="font-mono text-bearish text-lg">{formatPrice(actionPlan?.stop_loss)}</p>
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Risk Note</p>
+                  <p className="mt-1">
+                    保持执行纪律：入场-止盈-止损需成套考虑，价格偏离时优先控制仓位。
+                  </p>
                 </div>
-                <div className="space-y-1">
-                  <p className="text-slate-400">Strategy</p>
-                  <p className="font-mono text-slate-100">{actionPlan?.suggested_strategy ?? '待生成'}</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-slate-400">Risk Sizing</p>
-                  <p className="font-mono text-amber-100">{actionPlan?.risk_sizing ?? '待生成'}</p>
-                </div>
-              </div>
-              <div className="mt-2 rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-slate-300">
-                <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Entry Range</p>
-                <p className="mt-1 font-mono text-slate-100">
-                  {formatRange(entryRange.lower, entryRange.upper, entryRange.basis ? `（${entryRange.days ?? 30}日基于${entryRange.basis}）` : '')}
-                </p>
               </div>
             </div>
           </>
