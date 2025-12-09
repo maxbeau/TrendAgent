@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Optional, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -23,13 +23,25 @@ class Settings(BaseSettings):
     openai_model_name: str = "gpt-5.1"
     openai_small_model_name: str = "gpt-4o-mini"
     openai_base_url: str = "https://api.openai.com/v1"
-    yfinance_proxy: Optional[str] = "http://127.0.0.1:7890"
+    yfinance_proxy: Optional[str] = None
 
     # Frontend dev server origins allowed to call the API.
-    allowed_origins: list[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
+    # In production, set ALLOWED_ORIGINS as a comma-separated string of domains.
+    # Example: "https://your-app.vercel.app,https://another-domain.com"
+    allowed_origins: List[str] = Field(
+        default=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
+        env="ALLOWED_ORIGINS",
+    )
+
+    @field_validator('allowed_origins', mode='before')
+    @classmethod
+    def parse_allowed_origins(cls, v):
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(',') if origin.strip()]
+        return v
 
     fmp_base_url: str = "https://financialmodelingprep.com/api"
     massive_base_url: str = "https://api.massive.com"
