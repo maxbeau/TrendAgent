@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAionStore } from '@/store/aion-store';
 import type { KeyVariable } from '@/types/aion';
 
@@ -9,9 +10,9 @@ const impactMap: Record<KeyVariable['impact'], { label: string; className: strin
   neutral: { label: 'Neutral', className: 'text-slate-200', indicator: '→' },
 };
 
-export function KeyVariableTable({ variables }: { variables?: KeyVariable[] } = {}) {
+export function KeyVariableTable({ variables, isLoading }: { variables?: KeyVariable[]; isLoading?: boolean } = {}) {
   const storeVariables = useAionStore((state) => state.analysis?.key_variables);
-  const rows = variables ?? storeVariables ?? [];
+  const rows = isLoading ? [] : variables ?? storeVariables ?? [];
 
   return (
     <Card className="glass-card">
@@ -23,7 +24,20 @@ export function KeyVariableTable({ variables }: { variables?: KeyVariable[] } = 
         <Badge variant="outline">Key Variables</Badge>
       </CardHeader>
       <CardContent>
-        {rows.length === 0 ? (
+        {isLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, idx) => (
+              <div key={idx} className="rounded-xl border border-dashed border-white/20 bg-white/5 p-4">
+                <Skeleton className="h-4 w-32" />
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <Skeleton className="h-5 w-full" />
+                  <Skeleton className="h-5 w-full" />
+                  <Skeleton className="h-5 w-full" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : rows.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/20 bg-white/5 p-6 text-sm text-slate-300">
             暂无关键变量数据，可在后端就绪后自动填充。当前展示为默认占位。
           </div>

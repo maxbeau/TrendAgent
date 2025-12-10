@@ -65,7 +65,7 @@ export default function DashboardClientPage() {
   const hydrate = useAionStore((state) => state.hydrate);
   const setAnalysis = useAionStore((state) => state.setAnalysis);
   const clear = useAionStore((state) => state.clear);
-  const ticker = analysis?.ticker || urlTicker;
+  const ticker = urlTicker;
   const [tickerInput, setTickerInput] = useState(urlTicker);
   const [factorDialog, setFactorDialog] = useState<{
     key: FactorKey;
@@ -145,6 +145,10 @@ export default function DashboardClientPage() {
       refetchReport();
     }
   }, [isSuccess, refetchReport]);
+  const isRefreshing = isCalculating || reportFetching;
+  const displayAnalysis = isRefreshing ? undefined : currentAnalysis;
+  const displayOhlc = isRefreshing ? undefined : ohlc;
+  const displayFactorMeta = isRefreshing ? undefined : factorMeta;
 
   const liveQuote = useLiveQuote();
   const priceTone =
@@ -154,39 +158,39 @@ export default function DashboardClientPage() {
 
   const formulaMap = useMemo(() => {
     const map: Partial<Record<FactorKey, string>> = {};
-    factorMeta?.factors?.forEach((item) => {
+    displayFactorMeta?.factors?.forEach((item) => {
       const key = item.factor_key as FactorKey;
       if (key) map[key] = item.formula_text || '';
     });
     return map;
-  }, [factorMeta?.factors]);
+  }, [displayFactorMeta?.factors]);
 
   // factorLabels 现在是静态的，无需额外处理
 
-  const modelLabel = analysis?.model_version ?? 'AION';
+  const modelLabel = displayAnalysis?.model_version ?? 'AION';
   const radarData = useMemo(() => {
-    if (!analysis?.factors) return [];
+    if (!displayAnalysis?.factors) return [];
     
-    const entries = (Object.entries(analysis.factors) as [FactorKey, { score: number }][]).map(([key, factor]) => ({
+    const entries = (Object.entries(displayAnalysis.factors) as [FactorKey, { score: number }][]).map(([key, factor]) => ({
       factor: factorLabels[key],
       score: factor.score ?? 0,
     }));
     
     return entries;
-  }, [analysis?.factors]);
+  }, [displayAnalysis?.factors]);
   const structureData = useMemo(
     () => ({
-      candles: ohlc?.candles ?? [],
-      ma20: ohlc?.ma20 ?? [],
-      ma50: ohlc?.ma50 ?? [],
-      ma200: ohlc?.ma200 ?? [],
-      bands: ohlc?.bands ?? [],
+      candles: displayOhlc?.candles ?? [],
+      ma20: displayOhlc?.ma20 ?? [],
+      ma50: displayOhlc?.ma50 ?? [],
+      ma200: displayOhlc?.ma200 ?? [],
+      bands: displayOhlc?.bands ?? [],
     }),
-    [ohlc],
+    [displayOhlc],
   );
 
   const lastSyncedValue = useMemo(() => {
-    const raw = analysis?.calculated_at;
+    const raw = displayAnalysis?.calculated_at;
     if (!raw) return '—';
     const normalizedRaw = /([zZ]|[+-]\d\d:\d\d)$/.test(raw) ? raw : `${raw}Z`;
     const dt = new Date(normalizedRaw);
@@ -203,34 +207,34 @@ export default function DashboardClientPage() {
       second: '2-digit',
       hour12: false,
     });
-  }, [analysis?.calculated_at]);
+  }, [displayAnalysis?.calculated_at]);
 
   const ivHvDelta = useMemo(() => {
-    const components = analysis?.factors?.volatility?.components as { iv_vs_hv?: unknown } | undefined;
+    const components = displayAnalysis?.factors?.volatility?.components as { iv_vs_hv?: unknown } | undefined;
     return safeNumber(components?.iv_vs_hv);
-  }, [analysis?.factors?.volatility?.components]);
+  }, [displayAnalysis?.factors?.volatility?.components]);
   const expectedMove = useMemo(() => {
-    const components = analysis?.factors?.volatility?.components as { expected_move?: RawExpectedMove } | undefined;
+    const components = displayAnalysis?.factors?.volatility?.components as { expected_move?: RawExpectedMove } | undefined;
     return pickExpectedMove(components?.expected_move);
-  }, [analysis?.factors?.volatility?.components]);
+  }, [displayAnalysis?.factors?.volatility?.components]);
   const ivHvBadgeText = useMemo(() => buildIvHvBadgeLabel(ivHvDelta), [ivHvDelta]);
   const expectedRangeText = useMemo(() => formatExpectedMoveRange(expectedMove), [expectedMove]);
 
   const volumeZ = useMemo(() => {
-    const components = analysis?.factors?.technical?.components as { volume_z?: unknown } | undefined;
+    const components = displayAnalysis?.factors?.technical?.components as { volume_z?: unknown } | undefined;
     return safeNumber(components?.volume_z);
-  }, [analysis?.factors?.technical?.components]);
+  }, [displayAnalysis?.factors?.technical?.components]);
   const putCall = useMemo(() => {
-    const components = analysis?.factors?.flow?.components as { put_call?: { put_call_ratio?: unknown } } | undefined;
+    const components = displayAnalysis?.factors?.flow?.components as { put_call?: { put_call_ratio?: unknown } } | undefined;
     return safeNumber(components?.put_call?.put_call_ratio);
-  }, [analysis?.factors?.flow?.components]);
+  }, [displayAnalysis?.factors?.flow?.components]);
   const narrativeText = useMemo(() => {
-    const catalyst = analysis?.factors?.catalyst?.summary;
-    const industry = analysis?.factors?.industry?.summary;
+    const catalyst = displayAnalysis?.factors?.catalyst?.summary;
+    const industry = displayAnalysis?.factors?.industry?.summary;
     const candidate = catalyst || industry || '';
     if (!candidate || candidate.includes('等待模型结果')) return '等待模型生成行业/催化叙事';
     return candidate.replace(/^Score\s*[:]*\s*[0-9.]+\s*(?:·|:)?\s*/i, '').trim();
-  }, [analysis?.factors?.catalyst?.summary, analysis?.factors?.industry?.summary]);
+  }, [displayAnalysis?.factors?.catalyst?.summary, displayAnalysis?.factors?.industry?.summary]);
   const volSnapshot = useMemo(() => {
     const desc = describeIvHvDelta(ivHvDelta);
     const base = `Vol: ${desc.text}`;
@@ -244,12 +248,12 @@ export default function DashboardClientPage() {
     return `Flow: ${volumePart} · ${pcrPart}`;
   }, [volumeZ, putCall]);
 
-  const formulaLoading = reportLoading && !factorMeta;
-  const ohlcLoading = reportLoading && !ohlc;
+  const formulaLoading = isRefreshing || (reportLoading && !displayFactorMeta);
+  const ohlcLoading = isRefreshing || (reportLoading && !displayOhlc);
   const ohlcErrorMessage = reportErrorMessage;
-  const isRefreshing = isCalculating || reportFetching;
+  const radarLoading = isRefreshing || (reportLoading && !radarData.length);
   const handleRefresh = useCallback(() => {
-    if (isCalculating) return;
+    if (isRefreshing) return;
     const now = Date.now();
     if (lastRefreshTime.current && now - lastRefreshTime.current < 1000) {
       return;
@@ -257,7 +261,7 @@ export default function DashboardClientPage() {
     lastRefreshTime.current = now;
     refetchReport();
     start({ ticker: urlTicker });
-  }, [isCalculating, refetchReport, start, urlTicker]);
+  }, [isRefreshing, refetchReport, start, urlTicker]);
 
   const renderSummary = (text?: string) => {
     if (!text) return '暂无摘要，可重新运行引擎获取最新结果。';
@@ -486,7 +490,7 @@ export default function DashboardClientPage() {
               </div>
               <button
                 onClick={handleRefresh}
-                disabled={isCalculating}
+                disabled={isRefreshing}
                 className="group inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-slate-100 transition hover:border-violet-400/40 hover:text-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Refresh latest data"
                 title="刷新最新数据"
@@ -498,7 +502,7 @@ export default function DashboardClientPage() {
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-          <ActionCard isCalculating={isCalculating} isLoading={reportLoading && !analysis} />
+          <ActionCard result={displayAnalysis} isCalculating={isRefreshing} isLoading={reportLoading && !displayAnalysis} />
 
           <Card>
             <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -508,7 +512,7 @@ export default function DashboardClientPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {reportLoading && !radarData.length ? (
+              {radarLoading ? (
                 <Skeleton className="h-[320px] w-full rounded-xl" />
               ) : reportErrorMessage ? (
                 <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-amber-100">
@@ -533,6 +537,7 @@ export default function DashboardClientPage() {
             <Badge variant="outline">AION Factors</Badge>
           </div>
           <FactorGrid
+            result={displayAnalysis}
             onSelect={(key, data) =>
               setFactorDialog({
                 key,
@@ -543,16 +548,23 @@ export default function DashboardClientPage() {
               })
             }
             metaLoading={formulaLoading}
+            isLoading={isRefreshing}
           />
         </section>
 
         <section className="grid gap-6">
-          <TrendScenario />
-          <KeyVariableTable />
+          <TrendScenario scenarios={displayAnalysis?.scenarios} isLoading={isRefreshing} />
+          <KeyVariableTable variables={displayAnalysis?.key_variables} isLoading={isRefreshing} />
         </section>
 
         <section className="grid gap-6">
-          <StrategyMatrix />
+          <StrategyMatrix
+            stockStrategy={displayAnalysis?.stock_strategy}
+            optionStrategies={displayAnalysis?.option_strategies}
+            riskManagement={displayAnalysis?.risk_management}
+            executionNotes={displayAnalysis?.execution_notes}
+            isLoading={isRefreshing}
+          />
         </section>
 
         <section className="grid gap-6">
@@ -590,7 +602,12 @@ export default function DashboardClientPage() {
               <CardDescription>基础行情 · 波动率 · 资金与成交 · 行业与叙事</CardDescription>
             </CardHeader>
             <CardContent>
-              <MarketSnapshot ticker={ticker} />
+              <MarketSnapshot
+                ticker={ticker}
+                factors={displayAnalysis?.factors}
+                actionCard={displayAnalysis?.action_card}
+                isLoading={isRefreshing}
+              />
             </CardContent>
           </Card>
         </section>

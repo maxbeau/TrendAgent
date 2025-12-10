@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="${SCRIPT_DIR}"
+cd "${ROOT_DIR}"
+
 # TrendAgent 开发环境一键启动脚本
 # 请在项目根目录执行: ./start-dev.sh
 
@@ -19,7 +23,7 @@ ensure_port_free
 
 echo "🚀 正在启动 TrendAgent 后端服务..."
 # 使用 subshell 在后台启动后端, 避免污染当前终端目录
-(cd backend && uv run uvicorn app.main:application --reload --port "${BACKEND_PORT}") &
+(cd "${ROOT_DIR}/backend" && uv run uvicorn app.main:application --reload --port "${BACKEND_PORT}") &
 BACKEND_PID=$!
 
 cleanup() {
@@ -55,7 +59,7 @@ for i in $(seq 1 "$HEALTH_TIMEOUT"); do
 done
 
 echo "🚀 正在启动 TrendAgent 前端服务..."
-npm run dev --prefix frontend || {
+npm run dev --prefix "${ROOT_DIR}/frontend" || {
     echo "❌ 前端启动失败。"
     handle_exit 1
 }

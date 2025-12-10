@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAionStore } from '@/store/aion-store';
 import type { AionAnalysisResult, FactorKey } from '@/types/aion';
 import { factorLabels } from '@/lib/factor-labels';
@@ -22,11 +23,40 @@ interface FactorGridProps {
   result?: AionAnalysisResult;
   onSelect?: (factor: FactorKey, data?: AionAnalysisResult['factors'][FactorKey]) => void;
   metaLoading?: boolean;
+  isLoading?: boolean;
 }
 
-export function FactorGrid({ result, onSelect, metaLoading }: FactorGridProps) {
+export function FactorGrid({ result, onSelect, metaLoading, isLoading }: FactorGridProps) {
   const storeResult = useAionStore((state) => state.analysis);
-  const factors = (result ?? storeResult)?.factors;
+  const factors = isLoading ? undefined : (result ?? storeResult)?.factors;
+
+  if (isLoading) {
+    return (
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {Object.entries(factorLabels).map(([key]) => (
+          <Card key={key} className="glass-card">
+            <CardHeader className="space-y-3 pb-2">
+              <div className="flex items-center justify-between gap-2">
+                <Skeleton className="h-4 w-24" />
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-7 w-14" />
+                  <Skeleton className="h-6 w-16" />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-2 w-full" />
+              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                <span>加载中...</span>
+                <Skeleton className="h-4 w-12" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

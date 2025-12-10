@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useLiveQuote } from '@/hooks/use-live-quote';
 import { useAionStore } from '@/store/aion-store';
 import type {
@@ -68,12 +69,14 @@ export function StrategyMatrix({
   optionStrategies?: OptionStrategy[];
   riskManagement?: RiskManagement;
   executionNotes?: ExecutionNotes;
+  isLoading?: boolean;
 } = {}) {
   const analysis = useAionStore((state) => state.analysis);
-  const stock = stockStrategy ?? analysis?.stock_strategy;
-  const options = optionStrategies ?? analysis?.option_strategies ?? [];
-  const risk = riskManagement ?? analysis?.risk_management;
-  const execNotes = executionNotes ?? analysis?.execution_notes;
+  const loading = Boolean(isLoading);
+  const stock = loading ? undefined : stockStrategy ?? analysis?.stock_strategy;
+  const options = loading ? [] : optionStrategies ?? analysis?.option_strategies ?? [];
+  const risk = loading ? undefined : riskManagement ?? analysis?.risk_management;
+  const execNotes = loading ? undefined : executionNotes ?? analysis?.execution_notes;
   const hasData = stock || options.length || risk || execNotes;
   const liveQuote = useLiveQuote();
   const entryDistance = useMemo(
@@ -91,7 +94,31 @@ export function StrategyMatrix({
         <Badge variant="outline">Execution</Badge>
       </CardHeader>
       <CardContent className="space-y-6">
-        {!hasData ? (
+        {loading ? (
+          <div className="space-y-4">
+            <div className="grid gap-4 lg:grid-cols-2">
+              {Array.from({ length: 2 }).map((_, idx) => (
+                <div key={idx} className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-3">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-6 w-32" />
+                  <Skeleton className="h-2 w-full" />
+                  <Skeleton className="h-2 w-3/4" />
+                  <Skeleton className="h-2 w-2/3" />
+                </div>
+              ))}
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {Array.from({ length: 2 }).map((_, idx) => (
+                <div key={idx} className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-3">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-2 w-full" />
+                  <Skeleton className="h-2 w-5/6" />
+                  <Skeleton className="h-2 w-2/3" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : !hasData ? (
           <div className="rounded-xl border border-dashed border-white/20 bg-white/5 p-6 text-sm text-slate-300">
             暂无策略矩阵数据，可在后端同步完成后展示；当前显示为占位卡片。
           </div>

@@ -85,7 +85,7 @@ export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps
   const storeResult = useAionStore((state) => state.analysis);
   const resolvedResult = result ?? storeResult;
   const hasResult = Boolean(resolvedResult);
-  const showSkeleton = (isLoading || isCalculating) && !hasResult;
+  const showSkeleton = isCalculating || (isLoading && !hasResult);
   const showPlaceholder = !showSkeleton && !hasResult;
   const totalScoreRaw = resolvedResult?.total_score ?? 0;
   const totalScorePct = Math.min(Math.max(totalScoreRaw, 0), 5) * 20; // 转换为百分制

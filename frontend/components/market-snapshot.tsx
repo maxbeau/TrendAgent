@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { safeNumber } from '@/lib/numbers';
 import { describeIvHvDelta, formatExpectedMoveRange, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import { cn } from '@/lib/utils';
@@ -15,6 +16,7 @@ interface MarketSnapshotProps {
   ivHvDelta?: number | null;
   factors?: AionAnalysisResult['factors'];
   actionCard?: string;
+  isLoading?: boolean;
 }
 
 type InstitutionalTrend = {
@@ -220,12 +222,20 @@ function InstitutionalTrendTimeline({ trend }: { trend?: InstitutionalTrend | nu
   );
 }
 
-export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCard }: MarketSnapshotProps = {}) {
+export function MarketSnapshot({
+  ticker,
+  liveQuote,
+  ivHvDelta,
+  factors,
+  actionCard,
+  isLoading,
+}: MarketSnapshotProps = {}) {
   const analysis = useAionStore((state) => state.analysis);
   const derivedLiveQuote = useLiveQuote();
+  const loading = Boolean(isLoading);
   const resolvedTicker = ticker ?? 'NVDA';
-  const resolvedFactors = factors ?? analysis?.factors;
-  const resolvedActionCard = actionCard ?? analysis?.action_card;
+  const resolvedFactors = loading ? undefined : factors ?? analysis?.factors;
+  const resolvedActionCard = loading ? undefined : actionCard ?? analysis?.action_card;
   const volComponents = resolvedFactors?.volatility?.components as { iv_vs_hv?: unknown; expected_move?: RawExpectedMove } | undefined;
   const storeIvHvDelta = safeNumber(volComponents?.iv_vs_hv);
   const volDelta = safeNumber((ivHvDelta ?? storeIvHvDelta) ?? null);
@@ -269,39 +279,57 @@ export function MarketSnapshot({ ticker, liveQuote, ivHvDelta, factors, actionCa
         <Badge variant="outline">Ticker · {resolvedTicker}</Badge>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-          <SnapshotItem title="基础行情" badge="价格" emoji="📌" lines={[formatPrice(liveQuote ?? derivedLiveQuote)]} />
-          <SnapshotItem
-            title="波动率"
-            badge="IV vs HV 差值"
-            emoji="🔄"
-            lines={[volDesc.text]}
-            richLines={[
-              {
-                label: '波动区间',
-                value: volRangeLine ?? '等待波动区间数据',
-                highlight: Boolean(volRangeLine),
-              },
-            ]}
-            tone={volDesc.tone}
-          />
-          <SnapshotItem
-            title="资金与成交"
-            badge="成交与期权情绪"
-            emoji="🔍"
-            lines={[flowLinePrimary]}
-            richLines={flowRichLines}
-            tone={trendSummary.tone}
-          />
-          <SnapshotItem
-            title="行业与叙事"
-            badge="行业 & 催化摘要"
-            emoji="🧭"
-            lines={[narrativePrimary, narrativeSecondary]}
-            tone="neutral"
-          />
-        </div>
-        <InstitutionalTrendTimeline trend={institutionalTrend} />
+        {loading ? (
+          <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, idx) => (
+              <Card key={idx} className="border-white/10 bg-white/5 p-4">
+                <div className="flex items-center justify-between">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-5 w-12" />
+                </div>
+                <Skeleton className="mt-3 h-4 w-1/2" />
+                <Skeleton className="mt-2 h-3 w-full" />
+                <Skeleton className="mt-2 h-3 w-5/6" />
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+              <SnapshotItem title="基础行情" badge="价格" emoji="📌" lines={[formatPrice(liveQuote ?? derivedLiveQuote)]} />
+              <SnapshotItem
+                title="波动率"
+                badge="IV vs HV 差值"
+                emoji="🔄"
+                lines={[volDesc.text]}
+                richLines={[
+                  {
+                    label: '波动区间',
+                    value: volRangeLine ?? '等待波动区间数据',
+                    highlight: Boolean(volRangeLine),
+                  },
+                ]}
+                tone={volDesc.tone}
+              />
+              <SnapshotItem
+                title="资金与成交"
+                badge="成交与期权情绪"
+                emoji="🔍"
+                lines={[flowLinePrimary]}
+                richLines={flowRichLines}
+                tone={trendSummary.tone}
+              />
+              <SnapshotItem
+                title="行业与叙事"
+                badge="行业 & 催化摘要"
+                emoji="🧭"
+                lines={[narrativePrimary, narrativeSecondary]}
+                tone="neutral"
+              />
+            </div>
+            <InstitutionalTrendTimeline trend={institutionalTrend} />
+          </>
+        )}
       </CardContent>
     </Card>
   );

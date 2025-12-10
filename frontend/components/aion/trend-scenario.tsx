@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useAionStore } from '@/store/aion-store';
 import type { TrendScenario as TrendScenarioType } from '@/types/aion';
@@ -35,14 +36,15 @@ const toPct = (value?: number) => {
   return Math.min(100, Math.max(0, Math.round(value * 100)));
 };
 
-export function TrendScenario({ scenarios }: { scenarios?: TrendScenarioType[] } = {}) {
+export function TrendScenario({ scenarios, isLoading }: { scenarios?: TrendScenarioType[]; isLoading?: boolean } = {}) {
   const storeScenarios = useAionStore((state) => state.analysis?.scenarios);
+  const loading = Boolean(isLoading);
   const ordered = useMemo(
     () =>
-      (scenarios ?? storeScenarios ?? [])
+      (loading ? [] : scenarios ?? storeScenarios ?? [])
         .slice()
         .sort((a, b) => scenarioPriority[a.type] - scenarioPriority[b.type]),
-    [scenarios, storeScenarios],
+    [loading, scenarios, storeScenarios],
   );
   const baseCase = useMemo(
     () => ordered.find((item) => item.type === 'base_case') ?? ordered[0],
@@ -79,7 +81,31 @@ export function TrendScenario({ scenarios }: { scenarios?: TrendScenarioType[] }
         <Badge variant="outline">Trend Scenarios</Badge>
       </CardHeader>
       <CardContent>
-        {ordered.length === 0 ? (
+        {loading ? (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-24" />
+              </div>
+              <Skeleton className="mt-3 h-3 w-full" />
+              <div className="mt-3 flex items-center gap-2">
+                <Skeleton className="h-7 w-24" />
+                <Skeleton className="h-7 w-24" />
+              </div>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {Array.from({ length: 2 }).map((_, idx) => (
+                <div key={idx} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <Skeleton className="h-4 w-28" />
+                  <Skeleton className="mt-2 h-6 w-16" />
+                  <Skeleton className="mt-3 h-2 w-full" />
+                  <Skeleton className="mt-3 h-10 w-full" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : ordered.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/20 bg-white/5 p-6 text-sm text-slate-300">
             暂无情景分析数据，等待后端接口接入。当前展示为占位信息。
           </div>
