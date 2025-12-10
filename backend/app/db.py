@@ -21,7 +21,7 @@ engine = create_async_engine(
     _normalized_db_url(settings.database_url),
     future=True,
     echo=False,
-    connect_args={"server_settings": {"statement_cache_size": "0"}},
+    connect_args={"statement_cache_size": 0},
 )
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
