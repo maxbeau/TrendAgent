@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { IChartApi, LogicalRange, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, Logical, LogicalRange, UTCTimestamp } from 'lightweight-charts';
 
 interface CandlePoint {
   time: string | number;
@@ -106,22 +106,22 @@ export function StructureChart({ candles, ma20, ma50, ma200, bands }: StructureC
       let to = range.to;
 
       if (width + 1 < minBars) {
-        to = Math.max(to, minBars - 1);
-        from = to - (minBars - 1);
+        to = Math.max(to, minBars - 1) as Logical;
+        from = (to - (minBars - 1)) as Logical;
       } else if (width + 1 > maxBars) {
-        to = Math.min(to, maxBars - 1);
-        from = to - (maxBars - 1);
+        to = Math.min(to, maxBars - 1) as Logical;
+        from = (to - (maxBars - 1)) as Logical;
       }
 
       if (from < 0) {
-        to -= from;
-        from = 0;
+        to = (to - from) as Logical;
+        from = 0 as Logical;
       }
       if (to > lastIndex) {
         const delta = to - lastIndex;
-        from -= delta;
-        to = lastIndex;
-        if (from < 0) from = 0;
+        from = (from - delta) as Logical;
+        to = lastIndex as Logical;
+        if (from < 0) from = 0 as Logical;
       }
 
       return { from, to };
@@ -145,8 +145,8 @@ export function StructureChart({ candles, ma20, ma50, ma200, bands }: StructureC
     (count: number) => {
       if (lastIndex < 0) return;
       const span = Math.min(Math.max(count, minBars), maxBars);
-      const to = lastIndex;
-      const from = Math.max(0, to - (span - 1));
+      const to = lastIndex as Logical;
+      const from = Math.max(0, to - (span - 1)) as Logical;
       applyRange({ from, to });
     },
     [applyRange, lastIndex, maxBars, minBars],
@@ -161,11 +161,11 @@ export function StructureChart({ candles, ma20, ma50, ma200, bands }: StructureC
         0,
         normCandles.findIndex((c) => c.time >= targetTs),
       );
-      const to = lastIndex;
-      const from = Math.max(0, Math.min(fromIdx, to));
+      const to = lastIndex as Logical;
+      const from = Math.max(0, Math.min(fromIdx, to)) as Logical;
       const span = to - from + 1;
       const clampedSpan = Math.min(Math.max(span, minBars), maxBars);
-      const adjustedFrom = Math.max(0, to - (clampedSpan - 1));
+      const adjustedFrom = Math.max(0, to - (clampedSpan - 1)) as Logical;
       applyRange({ from: adjustedFrom, to });
     },
     [applyRange, lastIndex, maxBars, minBars, normCandles],
@@ -180,8 +180,8 @@ export function StructureChart({ candles, ma20, ma50, ma200, bands }: StructureC
       0,
       normCandles.findIndex((c) => c.time >= start),
     );
-    const to = lastIndex;
-    const from = Math.max(0, fromIdx);
+    const to = lastIndex as Logical;
+    const from = Math.max(0, fromIdx) as Logical;
     applyRange(clampRange({ from, to }));
   }, [applyRange, clampRange, lastIndex, normCandles]);
 
@@ -284,8 +284,8 @@ export function StructureChart({ candles, ma20, ma50, ma200, bands }: StructureC
         };
 
         const initialSpan = Math.min(60, maxBars);
-        const initialFrom = Math.max(0, lastIndex - (initialSpan - 1));
-        const initialRange = clampRange({ from: initialFrom, to: lastIndex }) ?? undefined;
+        const initialFrom = Math.max(0, lastIndex - (initialSpan - 1)) as Logical;
+        const initialRange = clampRange({ from: initialFrom, to: lastIndex as Logical }) ?? undefined;
         if (initialRange) {
           applyRange(initialRange);
           updateLabel(initialRange);
@@ -352,7 +352,7 @@ export function StructureChart({ candles, ma20, ma50, ma200, bands }: StructureC
   const handle3M = () => setRangeByDays(66);
   const handle6M = () => setRangeByDays(132);
   const handleYtd = () => setRangeYtd();
-  const handleMax = () => applyRange(clampRange({ from: 0, to: lastIndex }));
+  const handleMax = () => applyRange(clampRange({ from: 0 as Logical, to: lastIndex as Logical }));
 
   return (
     <div className="relative h-[380px] w-full space-y-3">
