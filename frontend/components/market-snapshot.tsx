@@ -265,9 +265,8 @@ export function MarketSnapshot({
   const catalystSummary = resolvedFactors?.catalyst?.summary;
   const narrativePrimary =
     industrySummary || catalystSummary
-      ? [industrySummary, catalystSummary].filter(Boolean).join(' / ')
+      ? [industrySummary, catalystSummary].filter(Boolean).join(' · ')
       : '等待模型生成行业与催化叙事';
-  const narrativeSecondary = resolvedActionCard ? `当前决策卡片：${resolvedActionCard}` : '运行 AION 引擎后展示决策卡片';
 
   return (
     <Card className="glass-card">
@@ -280,8 +279,8 @@ export function MarketSnapshot({
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, idx) => (
+          <div className="grid gap-3 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, idx) => (
               <Card key={idx} className="border-white/10 bg-white/5 p-4">
                 <div className="flex items-center justify-between">
                   <Skeleton className="h-4 w-20" />
@@ -292,10 +291,13 @@ export function MarketSnapshot({
                 <Skeleton className="mt-2 h-3 w-5/6" />
               </Card>
             ))}
+            <div className="col-span-full mt-2">
+              <Skeleton className="h-16 w-full rounded-xl" />
+            </div>
           </div>
         ) : (
           <>
-            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 lg:grid-cols-3">
               <SnapshotItem title="基础行情" badge="价格" emoji="📌" lines={[formatPrice(liveQuote ?? derivedLiveQuote)]} />
               <SnapshotItem
                 title="波动率"
@@ -319,14 +321,18 @@ export function MarketSnapshot({
                 richLines={flowRichLines}
                 tone={trendSummary.tone}
               />
-              <SnapshotItem
-                title="行业与叙事"
-                badge="行业 & 催化摘要"
-                emoji="🧭"
-                lines={[narrativePrimary, narrativeSecondary]}
-                tone="neutral"
-              />
             </div>
+
+            <div className="mt-3 rounded-xl border-l-2 border-violet-400 bg-white/5 p-4">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-500">
+                <span>🧭 行业与叙事</span>
+                {resolvedActionCard ? <Badge variant="outline" className="text-[10px] border-violet-400/30 text-violet-200">{resolvedActionCard}</Badge> : null}
+              </div>
+              <p className="mt-2 text-sm leading-relaxed text-slate-200">
+                {narrativePrimary}
+              </p>
+            </div>
+
             <InstitutionalTrendTimeline trend={institutionalTrend} />
           </>
         )}

@@ -28,7 +28,7 @@ import { factorLabels } from '@/lib/factor-labels';
 import { safeNumber } from '@/lib/numbers';
 import { fetchFullReport, type FullReportResponse } from '@/lib/requests/report';
 import { cn } from '@/lib/utils';
-import { describeIvHvDelta, formatExpectedMoveRange, ivHvBadgeLabel as buildIvHvBadgeLabel, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
+import { ivHvBadgeLabel as buildIvHvBadgeLabel, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import type { AionAnalysisResult, FactorKey } from '@/types/aion';
 import { RefreshCcw } from 'lucide-react';
 import { useAionStore } from '@/store/aion-store';
@@ -235,35 +235,6 @@ export default function DashboardClientPage() {
     return pickExpectedMove(components?.expected_move);
   }, [displayAnalysis?.factors?.volatility?.components]);
   const ivHvBadgeText = useMemo(() => buildIvHvBadgeLabel(ivHvDelta), [ivHvDelta]);
-  const expectedRangeText = useMemo(() => formatExpectedMoveRange(expectedMove), [expectedMove]);
-
-  const volumeZ = useMemo(() => {
-    const components = displayAnalysis?.factors?.technical?.components as { volume_z?: unknown } | undefined;
-    return safeNumber(components?.volume_z);
-  }, [displayAnalysis?.factors?.technical?.components]);
-  const putCall = useMemo(() => {
-    const components = displayAnalysis?.factors?.flow?.components as { put_call?: { put_call_ratio?: unknown } } | undefined;
-    return safeNumber(components?.put_call?.put_call_ratio);
-  }, [displayAnalysis?.factors?.flow?.components]);
-  const narrativeText = useMemo(() => {
-    const catalyst = displayAnalysis?.factors?.catalyst?.summary;
-    const industry = displayAnalysis?.factors?.industry?.summary;
-    const candidate = catalyst || industry || '';
-    if (!candidate || candidate.includes('等待模型结果')) return '等待模型生成行业/催化叙事';
-    return candidate.replace(/^Score\s*[:]*\s*[0-9.]+\s*(?:·|:)?\s*/i, '').trim();
-  }, [displayAnalysis?.factors?.catalyst?.summary, displayAnalysis?.factors?.industry?.summary]);
-  const volSnapshot = useMemo(() => {
-    const desc = describeIvHvDelta(ivHvDelta);
-    const base = `Vol: ${desc.text}`;
-    return expectedRangeText ? `${base} · ${expectedRangeText}` : base;
-  }, [ivHvDelta, expectedRangeText]);
-  const flowSnapshot = useMemo(() => {
-    const volumePart =
-      volumeZ === null ? '成交量等待更新' : volumeZ >= 1.5 ? '成交量高位' : volumeZ >= 0.5 ? '成交量略高' : volumeZ <= -0.8 ? '成交量偏低' : '成交量中性';
-    const pcrPart =
-      putCall === null ? 'Put/Call 等待更新' : putCall > 1.2 ? 'Put/Call 偏高（防守）' : putCall < 0.8 ? 'Put/Call 偏低（看涨）' : 'Put/Call 中性';
-    return `Flow: ${volumePart} · ${pcrPart}`;
-  }, [volumeZ, putCall]);
 
   const formulaLoading = isRefreshing || (reportLoading && !displayFactorMeta);
   const ohlcLoading = isRefreshing || (reportLoading && !displayOhlc);
@@ -481,9 +452,6 @@ export default function DashboardClientPage() {
               </span>{' '}
               · Daily Δ <span className={cn('font-mono', priceTone)}>{pctLabel}</span>
             </p>
-            <p className="text-sm text-slate-500">
-              {volSnapshot} · {flowSnapshot} · {narrativeText}
-            </p>
             {reportErrorMessage ? <p className="text-xs text-warning">{reportErrorMessage}</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -514,20 +482,12 @@ export default function DashboardClientPage() {
         </section>
 
         <section>
-          <Card>
-            <CardHeader>
-              <CardTitle>市场快照</CardTitle>
-              <CardDescription>基础行情 · 波动率 · 资金与成交 · 行业与叙事</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <MarketSnapshot
-                ticker={ticker}
-                factors={displayAnalysis?.factors}
-                actionCard={displayAnalysis?.action_card}
-                isLoading={isRefreshing}
-              />
-            </CardContent>
-          </Card>
+          <MarketSnapshot
+            ticker={ticker}
+            factors={displayAnalysis?.factors}
+            actionCard={displayAnalysis?.action_card}
+            isLoading={isRefreshing}
+          />
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">

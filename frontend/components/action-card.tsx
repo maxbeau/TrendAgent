@@ -85,6 +85,7 @@ export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps
   const storeResult = useAionStore((state) => state.analysis);
   const resolvedResult = result ?? storeResult;
   const hasResult = Boolean(resolvedResult);
+  // 加载态已有骨架屏，不再重复显示 “Calculating” 文案。
   const showSkeleton = isCalculating || (isLoading && !hasResult);
   const showPlaceholder = !showSkeleton && !hasResult;
   const totalScoreRaw = resolvedResult?.total_score ?? 0;
@@ -145,7 +146,6 @@ export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps
       <CardHeader className="flex flex-col gap-2">
         <CardTitle>核心行动卡</CardTitle>
         <CardDescription>模型决策与风险管理摘要</CardDescription>
-        {isCalculating ? <p className="text-xs text-slate-400">Calculating…</p> : null}
       </CardHeader>
       <CardContent className="space-y-6">
         {showSkeleton ? (

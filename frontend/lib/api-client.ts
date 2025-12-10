@@ -2,9 +2,10 @@ import axios from 'axios';
 
 const apiBaseUrl = process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:8000/api';
 
+// 报表/引擎计算可能超过 12s，这里放宽超时以减少无意义的前端失败提示。
 export const apiClient = axios.create({
   baseURL: apiBaseUrl,
-  timeout: 12000,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
