@@ -2,7 +2,7 @@
 
 import { AxiosError } from 'axios';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,7 +26,7 @@ import { useAionEngine } from '@/hooks/use-aion-engine';
 import { useLiveQuote } from '@/hooks/use-live-quote';
 import { factorLabels } from '@/lib/factor-labels';
 import { safeNumber } from '@/lib/numbers';
-import { fetchFullReport } from '@/lib/requests/report';
+import { fetchFullReport, type FullReportResponse } from '@/lib/requests/report';
 import { cn } from '@/lib/utils';
 import { describeIvHvDelta, formatExpectedMoveRange, ivHvBadgeLabel as buildIvHvBadgeLabel, pickExpectedMove, type RawExpectedMove } from '@/lib/volatility';
 import type { AionAnalysisResult, FactorKey } from '@/types/aion';
@@ -76,6 +76,26 @@ export default function DashboardClientPage() {
   } | null>(null);
   const lastRefreshTime = useRef<number>(0);
   const autoStartRef = useRef<Record<string, number>>({});
+  const queryClient = useQueryClient();
+  const cachedReport = queryClient.getQueryData<FullReportResponse>(['full-report', urlTicker]);
+
+  const currentAnalysis = useMemo(
+    () => (analysis?.ticker?.toUpperCase() === urlTicker ? analysis : undefined),
+    [analysis, urlTicker],
+  );
+  const cachedAnalysis = cachedReport?.analysis as unknown as AionAnalysisResult | undefined;
+  const hasFreshCache = useMemo(
+    () => isFresh(currentAnalysis) || isFresh(cachedAnalysis),
+    [cachedAnalysis, currentAnalysis],
+  );
+  const shouldFetchReport = useMemo(
+    () =>
+      !hasFreshCache ||
+      (!currentAnalysis && !cachedAnalysis) ||
+      (!ohlc && !cachedReport?.ohlc) ||
+      (!factorMeta && !cachedReport?.factor_meta),
+    [cachedAnalysis, cachedReport?.factor_meta, cachedReport?.ohlc, currentAnalysis, factorMeta, hasFreshCache, ohlc],
+  );
 
   const {
     data: reportData,
@@ -87,8 +107,10 @@ export default function DashboardClientPage() {
   } = useQuery({
     queryKey: ['full-report', urlTicker],
     queryFn: () => fetchFullReport(urlTicker),
-    enabled: typeof window !== 'undefined',
-    staleTime: 60_000,
+    enabled: typeof window !== 'undefined' && shouldFetchReport,
+    staleTime: CACHE_TTL_MS,
+    initialData: cachedReport,
+    refetchOnWindowFocus: false,
   });
   useEffect(() => {
     if (reportData) hydrate(reportData);
@@ -96,11 +118,6 @@ export default function DashboardClientPage() {
   const reportErrorMessage = reportError
     ? ((reportErrorObj as Error | undefined)?.message ?? '无法加载仪表盘报告')
     : null;
-  const currentAnalysis = useMemo(
-    () => (analysis?.ticker?.toUpperCase() === urlTicker ? analysis : undefined),
-    [analysis, urlTicker],
-  );
-  const hasFreshCache = useMemo(() => isFresh(currentAnalysis), [currentAnalysis]);
 
   useEffect(() => {
     setTickerInput(urlTicker);
@@ -259,9 +276,8 @@ export default function DashboardClientPage() {
       return;
     }
     lastRefreshTime.current = now;
-    refetchReport();
     start({ ticker: urlTicker });
-  }, [isRefreshing, refetchReport, start, urlTicker]);
+  }, [isRefreshing, start, urlTicker]);
 
   const renderSummary = (text?: string) => {
     if (!text) return '暂无摘要，可重新运行引擎获取最新结果。';
@@ -424,10 +440,7 @@ export default function DashboardClientPage() {
       <nav className="sticky top-0 z-20 border-b border-white/5 bg-obsidian-950/80 backdrop-blur">
         <div className="page-shell flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
-            <Badge variant="outline" className="border-violet-400/30 bg-white/5 text-slate-100">
-              TrendAgent
-            </Badge>
-            <span className="text-sm text-slate-400">多 ticker 快速切换</span>
+            <span className="text-sm text-slate-400">{modelLabel}</span>
           </div>
           <form
             onSubmit={handleTickerSubmit}
@@ -447,7 +460,7 @@ export default function DashboardClientPage() {
               type="submit"
               className="inline-flex items-center justify-center rounded-xl bg-violet-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-violet-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300"
             >
-              搜索
+              Analysis
             </button>
           </form>
         </div>
@@ -455,7 +468,6 @@ export default function DashboardClientPage() {
       <div className="page-shell space-y-6 py-8">
         <section className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">TrendAgent · {modelLabel}</p>
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex items-baseline gap-3">
                 <h1 className="text-4xl font-semibold tracking-tight">{ticker}</h1>
@@ -499,6 +511,23 @@ export default function DashboardClientPage() {
               </button>
             </div>
           </div>
+        </section>
+
+        <section>
+          <Card>
+            <CardHeader>
+              <CardTitle>市场快照</CardTitle>
+              <CardDescription>基础行情 · 波动率 · 资金与成交 · 行业与叙事</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <MarketSnapshot
+                ticker={ticker}
+                factors={displayAnalysis?.factors}
+                actionCard={displayAnalysis?.action_card}
+                isLoading={isRefreshing}
+              />
+            </CardContent>
+          </Card>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
@@ -595,32 +624,15 @@ export default function DashboardClientPage() {
           </Card>
         </section>
 
-        <section>
-          <Card>
-            <CardHeader>
-              <CardTitle>市场快照</CardTitle>
-              <CardDescription>基础行情 · 波动率 · 资金与成交 · 行业与叙事</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <MarketSnapshot
-                ticker={ticker}
-                factors={displayAnalysis?.factors}
-                actionCard={displayAnalysis?.action_card}
-                isLoading={isRefreshing}
-              />
-            </CardContent>
-          </Card>
-        </section>
-
         <Dialog open={Boolean(factorDialog)} onOpenChange={(open) => !open && setFactorDialog(null)}>
-          <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden">
-            <DialogHeader>
+          <DialogContent className="fixed right-0 top-0 z-50 flex h-full w-full max-w-full flex-col border-l border-white/10 bg-obsidian-950/95 backdrop-blur-xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-[480px]">
+            <DialogHeader className="px-1 pt-4">
               <DialogTitle>
                 因子详情 · {factorDialog ? factorLabels[factorDialog.key] : ''}
               </DialogTitle>
               <DialogDescription>AION 因子输出</DialogDescription>
             </DialogHeader>
-            <div className="mt-4 flex-1 overflow-y-auto pr-2 min-h-0">
+            <div className="mt-4 flex-1 overflow-y-auto px-1 pb-8 min-h-0">
               <div className="space-y-3 text-sm text-slate-200">
                 {renderSummary(factorDialog?.summary)}
                 <div className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">

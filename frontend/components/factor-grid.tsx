@@ -32,9 +32,9 @@ export function FactorGrid({ result, onSelect, metaLoading, isLoading }: FactorG
 
   if (isLoading) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="flex snap-x gap-4 overflow-x-auto pb-4 sm:grid sm:grid-cols-2 sm:pb-0 xl:grid-cols-4">
         {Object.entries(factorLabels).map(([key]) => (
-          <Card key={key} className="glass-card">
+          <Card key={key} className="glass-card min-w-[260px] snap-center sm:min-w-0">
             <CardHeader className="space-y-3 pb-2">
               <div className="flex items-center justify-between gap-2">
                 <Skeleton className="h-4 w-24" />
@@ -59,7 +59,7 @@ export function FactorGrid({ result, onSelect, metaLoading, isLoading }: FactorG
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="flex snap-x gap-4 overflow-x-auto pb-4 sm:grid sm:grid-cols-2 sm:pb-0 xl:grid-cols-4">
       {(Object.entries(factorLabels) as [FactorKey, string][]).map(([key, label]) => {
         const factor = factors?.[key];
         const score = typeof factor?.score === 'number' ? factor.score : null;
@@ -71,11 +71,11 @@ export function FactorGrid({ result, onSelect, metaLoading, isLoading }: FactorG
           <button
             key={key}
             type="button"
-            className="text-left"
+            className="text-left min-w-[260px] snap-center sm:min-w-0"
             onClick={() => onSelect?.(key, factor)}
             disabled={!onSelect}
           >
-            <Card className="glass-card transition hover:border-violet-400/40 hover:shadow-violet-500/10">
+            <Card className="glass-card h-full transition hover:border-violet-400/40 hover:shadow-violet-500/10">
               <CardHeader className="space-y-3 pb-2">
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle className="text-base">{label}</CardTitle>

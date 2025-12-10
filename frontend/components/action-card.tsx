@@ -50,34 +50,34 @@ const signalThemes: Record<
   { wrap: string; badge: string; text: string; ring: string }
 > = {
   STRONG_BUY: {
-    wrap: 'border-emerald-400/40 bg-gradient-to-r from-emerald-500/15 via-emerald-400/10 to-transparent',
-    badge: 'border-emerald-300/60 bg-emerald-500/10 text-emerald-100',
-    text: 'text-emerald-50',
-    ring: 'shadow-[0_0_0_8px_rgba(16,185,129,0.08)]',
+    wrap: 'border-emerald-400/60 bg-gradient-to-br from-emerald-500/20 via-emerald-400/10 to-emerald-950/20 shadow-[0_0_30px_-5px_rgba(16,185,129,0.3)]',
+    badge: 'border-emerald-300/60 bg-emerald-500/20 text-emerald-100 shadow-[0_0_10px_rgba(16,185,129,0.2)]',
+    text: 'text-emerald-50 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]',
+    ring: 'shadow-[0_0_0_4px_rgba(16,185,129,0.15),0_0_0_8px_rgba(16,185,129,0.05)]',
   },
   BUY: {
-    wrap: 'border-emerald-300/30 bg-gradient-to-r from-emerald-400/10 via-emerald-300/10 to-transparent',
-    badge: 'border-emerald-200/60 bg-emerald-400/10 text-emerald-50',
+    wrap: 'border-emerald-300/40 bg-gradient-to-br from-emerald-400/15 via-emerald-300/5 to-transparent shadow-[0_0_20px_-5px_rgba(52,211,153,0.2)]',
+    badge: 'border-emerald-200/50 bg-emerald-400/15 text-emerald-50',
     text: 'text-emerald-50',
-    ring: 'shadow-[0_0_0_8px_rgba(74,222,128,0.08)]',
+    ring: 'shadow-[0_0_0_4px_rgba(52,211,153,0.1)]',
   },
   WAIT: {
-    wrap: 'border-amber-200/30 bg-gradient-to-r from-amber-400/10 via-amber-300/10 to-transparent',
-    badge: 'border-amber-200/60 bg-amber-500/10 text-amber-50',
+    wrap: 'border-amber-200/40 bg-gradient-to-br from-amber-400/15 via-amber-300/5 to-transparent shadow-[0_0_20px_-5px_rgba(251,191,36,0.15)]',
+    badge: 'border-amber-200/50 bg-amber-500/15 text-amber-50',
     text: 'text-amber-50',
-    ring: 'shadow-[0_0_0_8px_rgba(251,191,36,0.08)]',
+    ring: 'shadow-[0_0_0_4px_rgba(251,191,36,0.1)]',
   },
   SELL: {
-    wrap: 'border-rose-300/30 bg-gradient-to-r from-rose-500/15 via-rose-400/10 to-transparent',
-    badge: 'border-rose-200/60 bg-rose-500/10 text-rose-50',
+    wrap: 'border-rose-300/40 bg-gradient-to-br from-rose-500/15 via-rose-400/5 to-transparent shadow-[0_0_20px_-5px_rgba(251,113,133,0.2)]',
+    badge: 'border-rose-200/50 bg-rose-500/15 text-rose-50',
     text: 'text-rose-50',
-    ring: 'shadow-[0_0_0_8px_rgba(251,113,133,0.08)]',
+    ring: 'shadow-[0_0_0_4px_rgba(251,113,133,0.1)]',
   },
   SHORT: {
-    wrap: 'border-rose-400/40 bg-gradient-to-r from-rose-500/15 via-rose-500/10 to-transparent',
-    badge: 'border-rose-300/60 bg-rose-600/10 text-rose-50',
-    text: 'text-rose-50',
-    ring: 'shadow-[0_0_0_8px_rgba(248,113,113,0.12)]',
+    wrap: 'border-rose-400/60 bg-gradient-to-br from-rose-500/20 via-rose-500/10 to-rose-950/20 shadow-[0_0_30px_-5px_rgba(244,63,94,0.3)]',
+    badge: 'border-rose-300/60 bg-rose-600/20 text-rose-50 shadow-[0_0_10px_rgba(244,63,94,0.2)]',
+    text: 'text-rose-50 drop-shadow-[0_0_8px_rgba(244,63,94,0.5)]',
+    ring: 'shadow-[0_0_0_4px_rgba(244,63,94,0.15),0_0_0_8px_rgba(244,63,94,0.05)]',
   },
 };
 
@@ -181,12 +181,13 @@ export function ActionCard({ result, isCalculating, isLoading }: ActionCardProps
           <>
             <div
               className={cn(
-                'relative overflow-hidden rounded-2xl border p-4 shadow-sm',
+                'relative overflow-hidden rounded-2xl border p-5 transition-all duration-500 hover:scale-[1.01]',
                 signalTheme.wrap,
               )}
             >
-              <div className="absolute -left-8 top-1/2 h-32 w-32 -translate-y-1/2 rounded-full bg-white/5 blur-2xl" />
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="absolute -left-10 top-1/2 h-40 w-40 -translate-y-1/2 rounded-full bg-white/10 blur-3xl" />
+              <div className="absolute -right-10 bottom-0 h-32 w-32 rounded-full bg-white/5 blur-3xl" />
+              <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-3">
                   <span className={cn('rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em]', signalTheme.badge)}>
                     {signalLabel(signal)}
