@@ -64,6 +64,7 @@ export function StrategyMatrix({
   optionStrategies,
   riskManagement,
   executionNotes,
+  isLoading,
 }: {
   stockStrategy?: StockStrategy;
   optionStrategies?: OptionStrategy[];
