@@ -31,7 +31,7 @@ const formatLevels = (levels: number[]) => {
 };
 
 const toPct = (value?: number) => {
-  if (!Number.isFinite(value)) return 0;
+  if (value === undefined || !Number.isFinite(value)) return 0;
   return Math.min(100, Math.max(0, Math.round(value * 100)));
 };
 

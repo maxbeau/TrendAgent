@@ -18,7 +18,7 @@ export function useLiveQuote(): LiveQuote | null {
     const prev = candles.length > 1 ? candles[candles.length - 2] : null;
     const close = Number(last.close);
     const prevClose = prev ? Number(prev.close) : null;
-    if (!Number.isFinite(close)) return null;
+    if (close === null || !Number.isFinite(close)) return null;
     const change = prevClose ? close - prevClose : 0;
     const pct = prevClose ? (change / prevClose) * 100 : 0;
     return {

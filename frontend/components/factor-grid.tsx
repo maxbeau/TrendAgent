@@ -6,7 +6,7 @@ import type { AionAnalysisResult, FactorKey } from '@/types/aion';
 import { factorLabels } from '@/lib/factor-labels';
 
 const clampPct = (score: number | null) => {
-  if (!Number.isFinite(score)) return 0;
+  if (score === null || !Number.isFinite(score)) return 0;
   return Math.min(100, Math.max(0, (Number(score) / 5) * 100));
 };
 
