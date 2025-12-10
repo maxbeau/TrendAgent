@@ -39,7 +39,7 @@ const distanceToneClass: Record<'in' | 'below' | 'above' | 'unknown', string> = 
 };
 
 const buildEntryDistance = (price: number | null, zone?: string) => {
-  if (!Number.isFinite(price)) return null;
+  if (price === null || !Number.isFinite(price)) return null;
   const parsed = parseEntryZone(zone);
   if (!parsed || (parsed.lower === null && parsed.upper === null)) return null;
   const { lower, upper } = parsed;
