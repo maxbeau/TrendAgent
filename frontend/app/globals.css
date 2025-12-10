@@ -51,6 +51,8 @@
   --input: 0 0% 100% / 0.12;
   --ring: 262 83% 64%;
   --radius: 0.75rem;
+  --font-sans: 'Inter', 'Inter Variable', 'system-ui', '-apple-system', 'sans-serif';
+  --font-mono: 'JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace';
 }
 
 @layer base {
@@ -59,6 +61,7 @@
   }
 
   body {
+    font-family: var(--font-sans);
     @apply bg-obsidian-950 text-slate-100 antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
