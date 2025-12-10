@@ -87,6 +87,7 @@ export default function DashboardPage() {
   } = useQuery({
     queryKey: ['full-report', urlTicker],
     queryFn: () => fetchFullReport(urlTicker),
+    enabled: typeof window !== 'undefined',
     staleTime: 60_000,
   });
   useEffect(() => {
