@@ -202,7 +202,7 @@ export function FactorDetailsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="fixed right-0 top-0 z-50 flex h-full w-full max-w-full flex-col border-l border-white/10 bg-obsidian-950/95 backdrop-blur-xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-[480px]">
+      <DialogContent className="z-50 flex w-full max-w-3xl flex-col border border-white/10 bg-obsidian-950/95 backdrop-blur-xl duration-200 sm:max-w-4xl">
         <DialogHeader className="px-1 pt-4">
           <DialogTitle>因子详情 · {factorLabel ?? ''}</DialogTitle>
           <DialogDescription>AION 因子输出</DialogDescription>

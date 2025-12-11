@@ -325,7 +325,6 @@ export default function DashboardClientPage() {
             stockStrategy={displayAnalysis?.stock_strategy}
             optionStrategies={displayAnalysis?.option_strategies}
             riskManagement={displayAnalysis?.risk_management}
-            executionNotes={displayAnalysis?.execution_notes}
             isLoading={isRefreshing}
           />
         </section>

@@ -202,17 +202,15 @@ export function StrategyMatrix({
               </div>
             </div>
             {risk && (
-              <div className="grid gap-4 lg:grid-cols-2">
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">风险管理</p>
-                  <div className="mt-3 space-y-2 text-sm text-slate-200">
-                    <p>初始仓位：{risk.initial_position}</p>
-                    <p>最大敞口：{risk.max_exposure}</p>
-                    <p>加仓规则：{risk.add_rule}</p>
-                    <p>止损规则：{risk.stop_loss_rule}</p>
-                    {risk.odds_rating ? <p>赔率评级：{risk.odds_rating}</p> : null}
-                    {risk.win_rate_rr ? <p>胜率 × 盈亏比：{risk.win_rate_rr}</p> : null}
-                  </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">风险管理</p>
+                <div className="mt-3 space-y-2 text-sm text-slate-200">
+                  <p>初始仓位：{risk.initial_position}</p>
+                  <p>最大敞口：{risk.max_exposure}</p>
+                  <p>加仓规则：{risk.add_rule}</p>
+                  <p>止损规则：{risk.stop_loss_rule}</p>
+                  {risk.odds_rating ? <p>赔率评级：{risk.odds_rating}</p> : null}
+                  {risk.win_rate_rr ? <p>胜率 × 盈亏比：{risk.win_rate_rr}</p> : null}
                 </div>
               </div>
             )}
