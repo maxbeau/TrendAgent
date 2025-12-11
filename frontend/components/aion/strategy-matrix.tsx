@@ -6,7 +6,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useLiveQuote } from '@/hooks/use-live-quote';
 import { useAionStore } from '@/store/aion-store';
 import type {
-  ExecutionNotes,
   OptionStrategy,
   RiskManagement,
   StockStrategy,
@@ -63,13 +62,11 @@ export function StrategyMatrix({
   stockStrategy,
   optionStrategies,
   riskManagement,
-  executionNotes,
   isLoading,
 }: {
   stockStrategy?: StockStrategy;
   optionStrategies?: OptionStrategy[];
   riskManagement?: RiskManagement;
-  executionNotes?: ExecutionNotes;
   isLoading?: boolean;
 } = {}) {
   const analysis = useAionStore((state) => state.analysis);
@@ -77,8 +74,7 @@ export function StrategyMatrix({
   const stock = loading ? undefined : stockStrategy ?? analysis?.stock_strategy;
   const options = loading ? [] : optionStrategies ?? analysis?.option_strategies ?? [];
   const risk = loading ? undefined : riskManagement ?? analysis?.risk_management;
-  const execNotes = loading ? undefined : executionNotes ?? analysis?.execution_notes;
-  const hasData = stock || options.length || risk || execNotes;
+  const hasData = stock || options.length || risk;
   const liveQuote = useLiveQuote();
   const entryDistance = useMemo(
     () => buildEntryDistance(liveQuote?.close ?? null, stock?.entry_zone),
@@ -205,50 +201,19 @@ export function StrategyMatrix({
                 )}
               </div>
             </div>
-            {(risk || execNotes) && (
+            {risk && (
               <div className="grid gap-4 lg:grid-cols-2">
-                {risk ? (
-                  <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">风险管理</p>
-                    <div className="mt-3 space-y-2 text-sm text-slate-200">
-                      <p>初始仓位：{risk.initial_position}</p>
-                      <p>最大敞口：{risk.max_exposure}</p>
-                      <p>加仓规则：{risk.add_rule}</p>
-                      <p>止损规则：{risk.stop_loss_rule}</p>
-                      {risk.odds_rating ? <p>赔率评级：{risk.odds_rating}</p> : null}
-                      {risk.win_rate_rr ? <p>胜率 × 盈亏比：{risk.win_rate_rr}</p> : null}
-                    </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">风险管理</p>
+                  <div className="mt-3 space-y-2 text-sm text-slate-200">
+                    <p>初始仓位：{risk.initial_position}</p>
+                    <p>最大敞口：{risk.max_exposure}</p>
+                    <p>加仓规则：{risk.add_rule}</p>
+                    <p>止损规则：{risk.stop_loss_rule}</p>
+                    {risk.odds_rating ? <p>赔率评级：{risk.odds_rating}</p> : null}
+                    {risk.win_rate_rr ? <p>胜率 × 盈亏比：{risk.win_rate_rr}</p> : null}
                   </div>
-                ) : null}
-                {execNotes ? (
-                  <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">执行提示</p>
-                    <div className="mt-3 space-y-2 text-sm text-slate-200">
-                      {execNotes.observation_cycle?.length ? (
-                        <div>
-                          <p className="text-xs text-slate-500">观察周期</p>
-                          <div className="mt-1 flex flex-wrap gap-2">
-                            {execNotes.observation_cycle.map((cycle) => (
-                              <Badge key={cycle} variant="outline">
-                                {cycle}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                      {execNotes.signals_to_watch?.length ? (
-                        <div>
-                          <p className="text-xs text-slate-500">重点信号</p>
-                          <ul className="mt-1 list-inside list-disc space-y-1 text-slate-300">
-                            {execNotes.signals_to_watch.map((signal) => (
-                              <li key={signal}>{signal}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
+                </div>
               </div>
             )}
           </>
