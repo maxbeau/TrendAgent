@@ -1,7 +1,7 @@
 from typing import Optional, List
 
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class MacroThresholds(BaseModel):
@@ -13,6 +13,8 @@ class MacroThresholds(BaseModel):
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     database_url: str = Field(..., env="DATABASE_URL")
     supabase_url: str = ""
     supabase_key: str = ""
@@ -23,7 +25,8 @@ class Settings(BaseSettings):
     openai_model_name: str = "gpt-5.1"
     openai_small_model_name: str = "gpt-4o-mini"
     openai_base_url: str = "https://api.openai.com/v1"
-    yfinance_proxy: Optional[str] = None
+    http_proxy: str = Field(default="", env="HTTP_PROXY")
+    https_proxy: str = Field(default="", env="HTTPS_PROXY")
 
     # Frontend dev server origins allowed to call the API.
     # In production, set ALLOWED_ORIGINS as a comma-separated string of domains.
@@ -36,6 +39,17 @@ class Settings(BaseSettings):
         env="ALLOWED_ORIGINS",
     )
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        if not isinstance(v, str):
+            return v
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql+asyncpg://", 1)
+        if v.startswith("postgresql://") and "+asyncpg" not in v:
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
+
     @field_validator('allowed_origins', mode='before')
     @classmethod
     def parse_allowed_origins(cls, v):
@@ -47,9 +61,6 @@ class Settings(BaseSettings):
     massive_base_url: str = "https://api.massive.com"
     fred_base_url: str = "https://api.stlouisfed.org"
     macro_thresholds: MacroThresholds = MacroThresholds()
-
-    class Config:
-        env_file = ".env"
 
 
 def get_settings() -> Settings:

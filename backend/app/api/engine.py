@@ -1,15 +1,14 @@
 import logging
+import logging
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.api.serializers import serialize_analysis_score
 from app.db import AsyncSessionLocal, get_db
 from app.models import AnalysisScore, AionModel
 from app.services import aion_engine
@@ -18,89 +17,24 @@ from app.services.policy_tailwind import summarize_policy_tailwind
 from app.services.providers.base import ProviderError
 from app.services.risk_reward import summarize_risk_reward
 from app.services.tam_expansion import summarize_tam_expansion
+from app.schemas import (
+    AnalysisScoreSchema,
+    CalculationRequest,
+    CalculationTaskResponse,
+    EventIntensityRequest,
+    EventIntensityResponse,
+    PolicyTailwindRequest,
+    PolicyTailwindResponse,
+    RiskRewardRequest,
+    RiskRewardResponse,
+    TAMExpansionRequest,
+    TAMExpansionResponse,
+    TaskStatusResponse,
+)
 
 
 router = APIRouter(prefix="/engine", tags=["engine"])
 logger = logging.getLogger(__name__)
-
-
-class CalculationRequest(BaseModel):
-    ticker: str
-    model_version: Optional[str] = None
-
-
-class PolicyTailwindRequest(BaseModel):
-    ticker: str
-    limit: int = 12
-    lookback_days: int = 60
-
-
-class PolicyTailwindResponse(BaseModel):
-    ticker: str
-    verdict: str
-    confidence: int
-    summary: str
-    key_points: List[str]
-    sources: List[Dict[str, Optional[str]]]
-    generated_at: datetime
-
-
-class EventIntensityRequest(BaseModel):
-    ticker: str
-    limit: int = 12
-    lookback_days: int = 30
-
-
-class EventIntensityResponse(BaseModel):
-    ticker: str
-    intensity: str
-    score: int
-    confidence: int
-    summary: str
-    key_events: List[str]
-    sources: List[Dict[str, Optional[str]]]
-    generated_at: datetime
-
-
-class TAMExpansionRequest(BaseModel):
-    ticker: str
-    limit: int = 12
-    lookback_days: int = 90
-
-
-class TAMExpansionResponse(BaseModel):
-    ticker: str
-    outlook: str
-    score: int
-    confidence: int
-    summary: str
-    key_points: List[str]
-    sources: List[Dict[str, Optional[str]]]
-    generated_at: datetime
-
-
-class RiskRewardRequest(BaseModel):
-    ticker: str
-    lookback_days: int = 120
-
-
-class RiskRewardResponse(BaseModel):
-    ticker: str
-    status: str
-    close: Optional[float] = None
-    recent_high: Optional[float] = None
-    recent_low: Optional[float] = None
-    reward: Optional[float] = None
-    risk: Optional[float] = None
-    ratio: Optional[float] = None
-    lookback_days: int
-    message: Optional[str] = None
-    generated_at: datetime
-
-
-class CalculationTaskResponse(BaseModel):
-    message: str
-    task_id: str
 
 
 async def run_calculation_in_background(
@@ -165,8 +99,8 @@ async def calculate_aion_score(
     return CalculationTaskResponse(message="Calculation started", task_id=task_id)
 
 
-@router.get("/status/{task_id}")
-async def get_task_status(task_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+@router.get("/status/{task_id}", response_model=TaskStatusResponse)
+async def get_task_status(task_id: str, db: AsyncSession = Depends(get_db)) -> TaskStatusResponse:
     """
     根据 Task ID 从数据库查询计算结果。
     """
@@ -175,9 +109,11 @@ async def get_task_status(task_id: str, db: AsyncSession = Depends(get_db)) -> D
     score_entry = result.scalar_one_or_none()
 
     if score_entry:
-        return {"status": "completed", "data": serialize_analysis_score(score_entry)}
+        return TaskStatusResponse(
+            status="completed", data=AnalysisScoreSchema.model_validate(score_entry)
+        )
 
-    return {"status": "pending"}
+    return TaskStatusResponse(status="pending", data=None)
 
 
 @router.post("/policy-tailwind", response_model=PolicyTailwindResponse)

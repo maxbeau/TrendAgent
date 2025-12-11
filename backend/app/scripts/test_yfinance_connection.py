@@ -16,7 +16,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
-from app.config import get_settings
 from app.services.providers import YFinanceProvider
 from app.services.providers.base import ProviderError
 
@@ -25,9 +24,14 @@ async def main() -> None:
     ticker = "AAPL"
     start = date.today() - timedelta(days=30)
     end = date.today()
-    settings = get_settings()
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    print(
+        f"HTTPS_PROXY: {os.environ.get('HTTPS_PROXY')!r}, "
+        f"HTTP_PROXY: {os.environ.get('HTTP_PROXY')!r}, "
+        f"using: {proxy!r}"
+    )
 
-    provider = YFinanceProvider(proxy=settings.yfinance_proxy)
+    provider = YFinanceProvider(proxy=proxy)
 
     print("=== yfinance: daily bars ===")
     try:

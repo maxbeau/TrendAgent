@@ -1,4 +1,6 @@
 from collections import deque
+import logging
+from collections import deque
 from datetime import date, datetime, timedelta
 from statistics import pstdev
 from typing import Any, Dict, List
@@ -7,14 +9,29 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db import get_db
 from app.models import MarketDataDaily
 from app.services.providers import YFinanceProvider
+from app.services.providers.base import ProviderError
 
 router = APIRouter(prefix="/market", tags=["market"])
-settings = get_settings()
-yfinance_provider = YFinanceProvider(proxy=settings.yfinance_proxy)
+yfinance_provider = YFinanceProvider()
+logger = logging.getLogger(__name__)
+
+
+def _empty_payload(ticker: str, source: str, reason: str) -> Dict[str, Any]:
+    return {
+        "ticker": ticker,
+        "candles": [],
+        "ma20": [],
+        "ma50": [],
+        "ma200": [],
+        "bands": [],
+        "source": source,
+        "status": "unavailable",
+        "message": reason,
+        "data_points": 0,
+    }
 
 
 def _rolling_mean(values: List[float], window: int) -> List[float]:
@@ -64,15 +81,23 @@ async def get_ohlc(
     # Fallback to live yfinance quotes if DB 中没有对应数据，便于本地开发。
     if not rows:
         start = date.today() - timedelta(days=max(limit, 200) * 2)  # 留冗余以覆盖交易日缺口
+        logger.info("ohlc_fallback_yfinance_start", extra={"ticker": ticker, "start": start.isoformat(), "limit": limit})
         try:
             fetched = await yfinance_provider.fetch_equity_daily(ticker, start=start, end=None)
+        except ProviderError as exc:  # pragma: no cover - 网络/第三方异常
+            message = str(exc)
+            logger.warning("ohlc_fallback_yfinance_failed", extra={"ticker": ticker, "error": message})
+            return _empty_payload(ticker, "yfinance_unavailable", message)
         except Exception as exc:  # pragma: no cover - 网络/第三方异常
-            raise HTTPException(status_code=502, detail=f"Failed to fetch OHLC for {ticker}: {exc}") from exc
+            logger.exception("ohlc_fallback_yfinance_failed", extra={"ticker": ticker, "error": str(exc)})
+            return _empty_payload(ticker, "yfinance_unavailable", str(exc))
         rows = fetched[-limit:]
         source = "yfinance"
+        logger.info("ohlc_fallback_yfinance_success", extra={"ticker": ticker, "rows": len(rows)})
 
     if not rows:
-        raise HTTPException(status_code=404, detail=f"No OHLC data found for {ticker}")
+        logger.warning("ohlc_empty_rows", extra={"ticker": ticker, "source": source})
+        return _empty_payload(ticker, source, "No OHLC data found")
 
     def _value(row: Any, key: str) -> Any:
         return row.get(key) if isinstance(row, dict) else getattr(row, key, None)
@@ -116,7 +141,7 @@ async def get_ohlc(
         close_price = closes[close_idx]
         bands.append({"time": time, "upper": close_price + std_entry["value"], "lower": close_price - std_entry["value"]})
 
-    return {
+    payload = {
         "ticker": ticker,
         "candles": candles,
         "ma20": ma20,
@@ -124,4 +149,8 @@ async def get_ohlc(
         "ma200": ma200,
         "bands": bands,
         "source": source,
+        "status": "ok",
+        "data_points": len(candles),
     }
+    logger.info("ohlc_response", extra={"ticker": ticker, "source": source, "candles": len(candles)})
+    return payload

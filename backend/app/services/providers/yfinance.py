@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 from datetime import date, datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -27,6 +28,9 @@ def _std_norm_pdf(x: float) -> float:
 
 def _std_norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+_DEFAULT_PROXY: Optional[str] = None
 
 
 def _infer_spot(ticker: yf.Ticker, provided_spot: Optional[float]) -> Optional[float]:
@@ -106,13 +110,38 @@ class YFinanceProvider(BaseProvider):
     name = "yfinance"
 
     def __init__(self, proxy: Optional[str] = None) -> None:
-        self.proxy = proxy
+        self.proxy = proxy or self._resolve_proxy()
+
+        if self.proxy:
+            os.environ.setdefault("HTTP_PROXY", self.proxy)
+            os.environ.setdefault("HTTPS_PROXY", self.proxy)
+            yf.set_config(proxy=self.proxy)
+
+    @staticmethod
+    def _resolve_proxy() -> Optional[str]:
+        global _DEFAULT_PROXY
+        if _DEFAULT_PROXY:
+            return _DEFAULT_PROXY
+
+        resolved = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        if not resolved:
+            try:  # pragma: no cover - defensive
+                from app.config import get_settings
+
+                settings = get_settings()
+                resolved = settings.https_proxy or settings.http_proxy
+            except Exception:
+                resolved = None
+
+        _DEFAULT_PROXY = resolved or None
+        return _DEFAULT_PROXY
 
     def _make_ticker(self, symbol: str) -> yf.Ticker:
         return yf.Ticker(symbol)
 
     async def _to_thread(self, func: Callable, *args, **kwargs):
         def _wrapper():
+            # yfinance stores config globally; refresh proxy once per call to avoid external overrides.
             if self.proxy:
                 yf.set_config(proxy=self.proxy)
             return func(*args, **kwargs)

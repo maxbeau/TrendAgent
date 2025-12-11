@@ -536,7 +536,7 @@ async def main():
     massive = MassiveProvider()
     fred = FREDProvider()
     fear_greed = FearGreedIndexProvider()
-    yfinance = YFinanceProvider(proxy=settings.yfinance_proxy)
+    yfinance = YFinanceProvider()
 
     TICKER = "AAPL"  # Use a highly liquid ticker for validation
     

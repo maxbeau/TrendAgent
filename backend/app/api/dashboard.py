@@ -5,15 +5,15 @@ from sqlalchemy import desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.api.serializers import serialize_analysis_score
 from app.db import get_db
 from app.models import AnalysisScore
+from app.schemas import AnalysisScoreSchema, DashboardSummaryResponse
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-@router.get("/summary")
-async def get_dashboard_summary(db: AsyncSession = Depends(get_db)) -> Dict[str, List[Dict[str, Any]]]:
+@router.get("/summary", response_model=DashboardSummaryResponse)
+async def get_dashboard_summary(db: AsyncSession = Depends(get_db)) -> DashboardSummaryResponse:
     """
     获取每个 Ticker 最新的 AION 评分结果。
     """
@@ -25,4 +25,6 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db)) -> Dict[str,
     result = await db.execute(stmt)
     latest_scores = result.scalars().all()
 
-    return {"latest_scores": [serialize_analysis_score(score) for score in latest_scores]}
+    return DashboardSummaryResponse(
+        latest_scores=[AnalysisScoreSchema.model_validate(score) for score in latest_scores]
+    )

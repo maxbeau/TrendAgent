@@ -8,13 +8,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.models import ContextStore
 from app.services.llm import build_small_llm
 from app.services.providers import FMPProvider, YFinanceProvider
 from app.services.providers.base import ProviderError
 
-settings = get_settings()
 CONTEXT_TTL_DAYS = 7
 
 
@@ -93,7 +91,7 @@ async def build_context(
         return cached
 
     start_date = date.today() - timedelta(days=lookback_days)
-    provider = YFinanceProvider(proxy=settings.yfinance_proxy)
+    provider = YFinanceProvider()
     articles: List[Dict[str, Any]] = await provider.fetch_news(ticker, limit=max_news * 2, start=start_date)
 
     if not articles:
